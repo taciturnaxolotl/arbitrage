@@ -1,0 +1,36 @@
+name: Build RedRising
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: "latest"
+
+      
+
+      - name: Configure CMake
+        working-directory: dropship/redrising
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        working-directory: dropship/redrising
+        run: cmake --build build --config Release --target RedRising
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedRising.exe
+          path: dropship/redrising/build/Release/RedRising.exe
