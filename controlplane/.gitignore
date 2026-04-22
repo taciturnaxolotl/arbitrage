@@ -3,7 +3,7 @@ tmp/
 *.exe
 *.test
 *.out
-server
+/server
 .DS_Store
 build-errors.log
 controlplane.db*

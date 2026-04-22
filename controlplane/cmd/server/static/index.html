@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control Plane</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.charts-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+.chart-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
+.chart-card h3 { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
+.chart-card canvas { max-height: 240px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Control Plane</h1>
+  <div class="user-info" id="user-info" style="display:none;">
+    <span id="user-name" style="color:#8b949e;font-size:14px;"></span>
+    <img id="user-photo" style="display:none;width:28px;height:28px;border-radius:50%;" alt="">
+    <a href="/auth/logout" class="btn btn-sm">Logout</a>
+  </div>
+  <div class="status">
+    <span><span class="dot green"></span> <span id="online-count">0</span> online</span>
+    <span><span class="dot red"></span> <span id="offline-count">0</span> offline</span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">Total Clients</div>
+      <div class="value blue" id="total-clients">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg CPU</div>
+      <div class="value yellow" id="avg-cpu">0%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg Memory</div>
+      <div class="value green" id="avg-mem">0%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg Disk</div>
+      <div class="value red" id="avg-disk">0%</div>
+    </div>
+  </div>
+
+  <div class="charts-row">
+    <div class="chart-card">
+      <h3>OS Distribution</h3>
+      <canvas id="os-chart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Architecture</h3>
+      <canvas id="arch-chart"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Client Status</h3>
+      <canvas id="status-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header"><h3>Registered Clients</h3></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Hostname</th>
+          <th>OS</th>
+          <th>Arch</th>
+          <th>Status</th>
+          <th>CPU</th>
+          <th>Memory</th>
+          <th>Last Heartbeat</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="clients-tbody"></tbody>
+    </table>
+    <div class="empty" id="no-clients" style="display:none;">No clients registered</div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="command-modal">
+  <div class="modal">
+    <button class="close" onclick="closeCommandModal()">&times;</button>
+    <h2>Send Command</h2>
+    <div class="field">
+      <label>Command Type</label>
+      <select id="cmd-type">
+        <option value="exec">Execute Command</option>
+        <option value="restart_service">Restart Service</option>
+        <option value="update">Update Client</option>
+        <option value="reboot">Reboot System</option>
+        <option value="list_apps">List Applications</option>
+        <option value="list_processes">List Processes</option>
+        <option value="get_stats">Get System Stats</option>
+        <option value="get_os_info">Get OS Info</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Payload (JSON)</label>
+      <textarea id="cmd-payload">{}</textarea>
+    </div>
+    <button class="btn primary" onclick="sendCommand()">Send</button>
+  </div>
+</div>
+
+<script>
+class RelativeTimeElement extends HTMLElement {
+  static get observedAttributes() { return ['datetime','threshold','prefix','format']; }
+  connectedCallback(){this.update()}disconnectedCallback(){this.stopTimer()}attributeChangedCallback(){this.update()}
+  scheduleUpdate(ms){this.stopTimer();this.timer=setTimeout(()=>this.update(),ms)}
+  stopTimer(){if(this.timer){clearTimeout(this.timer);this.timer=null}}
+  get datetime(){return this.getAttribute('datetime')||''}get threshold(){return this.getAttribute('threshold')||'P14D'}get prefix(){return this.getAttribute('prefix')||'on'}get format(){return this.getAttribute('format')||'relative'}
+  parseThreshold(iso){const m=iso.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);if(!m)return 30*24*60*60*1000;return((parseInt(m[1]||0,10)*24+parseInt(m[2]||0,10))*60+parseInt(m[3]||0,10))*60*1000+parseInt(m[4]||0,10)*1000}
+  update(){const dt=this.datetime;if(!dt)return;const d=new Date(dt);if(isNaN(d.getTime()))return;const now=Date.now(),diff=now-d.getTime(),abs=Math.abs(diff),th=this.parseThreshold(this.threshold);if(this.format==='datetime'||abs>th){this.textContent=this.fmtDt(d);this.scheduleUpdate(3600000)}else{this.textContent=this.fmtRel(diff);const dl=this.nextDelay(abs);if(dl!==null)this.scheduleUpdate(dl)}}
+  nextDelay(abs){const s=Math.floor(abs/1000),m=Math.floor(s/60),h=Math.floor(m/60),d=Math.floor(h/24);if(s<60)return 1000;if(m<60)return 60000;if(h<24)return 300000;if(d<7)return 3600000;if(d<30)return 21600000;return null}
+  getRtf(){if(!this._rtf||this._rtfL!==navigator.language){this._rtfL=navigator.language;this._rtf=new Intl.RelativeTimeFormat(navigator.language,{numeric:'auto',style:'long'})}return this._rtf}
+  fmtRel(diff){const rtf=this.getRtf(),abs=Math.abs(diff),sign=diff>0?-1:1,s=Math.floor(abs/1000),m=Math.floor(s/60),h=Math.floor(m/60),d=Math.floor(h/24),dt=new Date(Date.now()-diff),now=new Date(),mo=(now.getFullYear()-dt.getFullYear())*12+(now.getMonth()-dt.getMonth()),yr=Math.floor(Math.abs(mo)/12)*sign;if(s<60)return rtf.format(sign*s,'second');if(m<60)return rtf.format(sign*m,'minute');if(h<24)return rtf.format(sign*h,'hour');if(d<30)return rtf.format(sign*d,'day');if(Math.abs(mo)<12)return rtf.format(mo,'month');return rtf.format(yr,'year')}
+  fmtDt(d){const now=new Date(),sameY=d.getFullYear()===now.getFullYear(),opts={month:'short',day:'numeric',...(sameY?{}:{year:'numeric'})},fmt=new Intl.DateTimeFormat(navigator.language,opts).format(d);return this.prefix?`${this.prefix} ${fmt}`:fmt}
+}
+customElements.define('relative-time',RelativeTimeElement);
+</script>
+<script>
+let ws;
+let osChart, archChart, statusChart;
+let currentClientId = null;
+let dashboardData = null;
+const chartColors = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#39d353','#f778ba','#79c0ff'];
+
+function initCharts() {
+  const opts = { responsive: true, plugins: { legend: { position: 'right', labels: { color: '#8b949e', padding: 12 } } } };
+  osChart = new Chart(document.getElementById('os-chart'), { type: 'pie', data: { labels: [], datasets: [{ data: [], backgroundColor: chartColors }] }, options: opts });
+  archChart = new Chart(document.getElementById('arch-chart'), { type: 'pie', data: { labels: [], datasets: [{ data: [], backgroundColor: chartColors }] }, options: opts });
+  statusChart = new Chart(document.getElementById('status-chart'), { type: 'pie', data: { labels: [], datasets: [{ data: [], backgroundColor: ['#3fb950','#f85149'] }] }, options: opts });
+}
+
+function updateCharts(data) {
+  osChart.data.labels = Object.keys(data.os_distribution); osChart.data.datasets[0].data = Object.values(data.os_distribution); osChart.update();
+  archChart.data.labels = Object.keys(data.arch_distribution); archChart.data.datasets[0].data = Object.values(data.arch_distribution); archChart.update();
+  statusChart.data.labels = Object.keys(data.status_distribution); statusChart.data.datasets[0].data = Object.values(data.status_distribution); statusChart.update();
+}
+
+function updateStats(data) {
+  document.getElementById('total-clients').textContent = data.total_clients;
+  document.getElementById('online-count').textContent = data.online_clients;
+  document.getElementById('offline-count').textContent = data.offline_clients;
+  document.getElementById('avg-cpu').textContent = data.avg_cpu.toFixed(1) + '%';
+  document.getElementById('avg-mem').textContent = data.avg_memory.toFixed(1) + '%';
+  document.getElementById('avg-disk').textContent = data.avg_disk.toFixed(1) + '%';
+}
+
+function renderClients(data) {
+  const tbody = document.getElementById('clients-tbody');
+  const noClients = document.getElementById('no-clients');
+  if (!data.clients || data.clients.length === 0) { tbody.innerHTML = ''; noClients.style.display = 'block'; return; }
+  noClients.style.display = 'none';
+  tbody.innerHTML = data.clients.map(c => `
+    <tr class="clickable" onclick="location.href='/host.html?id=${encodeURIComponent(c.id)}'">
+      <td><strong>${esc(c.hostname)}</strong><br><small style="color:#8b949e">${esc(c.id)}</small></td>
+      <td>${esc(c.os)}</td>
+      <td>${esc(c.arch)}</td>
+      <td><span class="badge ${c.status}">${c.status}</span></td>
+      <td>${c.cpu_percent.toFixed(1)}%</td>
+      <td>${c.memory_percent.toFixed(1)}%</td>
+      <td><relative-time datetime="${c.last_heartbeat}"></relative-time></td>
+      <td onclick="event.stopPropagation();"><button class="btn primary btn-sm" onclick="openCommandModal('${esc(c.id)}')">Command</button></td>
+    </tr>
+  `).join('');
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+async function refreshDashboard() {
+  try { const resp = await fetch('/api/dashboard'); const data = await resp.json(); dashboardData = data; updateStats(data); updateCharts(data); renderClients(data); } catch(e) { console.error('dashboard fetch error:', e); }
+}
+
+async function openCommandModal(id) { currentClientId = id; document.getElementById('command-modal').style.display = 'flex'; }
+function closeCommandModal() { document.getElementById('command-modal').style.display = 'none'; }
+
+async function sendCommand() {
+  if (!currentClientId) return;
+  const type = document.getElementById('cmd-type').value;
+  let payload = {}; try { payload = JSON.parse(document.getElementById('cmd-payload').value); } catch(e) {}
+  try {
+    const resp = await fetch(`/api/clients/${currentClientId}/commands`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, payload }) });
+    const cmd = await resp.json(); alert(`Command dispatched: ${cmd.id} (status: ${cmd.status})`); closeCommandModal();
+  } catch(e) { alert('Failed to send command: ' + e.message); }
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onclose = () => { setTimeout(connectWS, 3000); };
+  ws.onmessage = (e) => { const msg = JSON.parse(e.data); switch(msg.type) { case 'client_registered': case 'client_deregistered': case 'client_heartbeat': case 'client_data_updated': case 'command_created': case 'command_completed': refreshDashboard(); break; } };
+}
+
+initCharts(); refreshDashboard(); connectWS(); setInterval(refreshDashboard, 15000);
+</script>
+</body>
+</html>

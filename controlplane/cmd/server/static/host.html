@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Host Detail - Control Plane</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+.gauge-container { text-align: center; }
+.gauge-container canvas { max-height: 200px; }
+.gauge-label { margin-top: 8px; font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.gauge-value { font-size: 24px; font-weight: 600; margin-top: 4px; }
+.gauge-value.green { color: #3fb950; }
+.gauge-value.yellow { color: #d29922; }
+.gauge-value.red { color: #f85149; }
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+.tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; }
+.tab { padding: 10px 16px; cursor: pointer; font-size: 14px; color: #8b949e; border-bottom: 2px solid transparent; transition: color 0.1s; }
+.tab:hover { color: #e6edf3; }
+.tab.active { color: #e6edf3; border-bottom-color: #58a6ff; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.sync-bar { display: none; align-items: center; gap: 10px; }
+.sync-bar .sync-track { width: 160px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.sync-bar .sync-fill { height: 100%; width: 0%; border-radius: 3px; transition: width 0.5s ease; }
+.sync-bar .sync-fill.pending { background: #d29922; }
+.sync-bar .sync-fill.acknowledged { background: #58a6ff; }
+.sync-bar .sync-fill.completed { background: #3fb950; }
+.sync-bar .sync-fill.failed, .sync-bar .sync-fill.expired { background: #f85149; }
+.sync-bar .sync-label { font-size: 12px; color: #8b949e; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><a href="/">←</a> <span id="hostname">Loading...</span></h1>
+  <div class="meta">
+    <span id="client-id" style="color:#8b949e;font-size:13px;"></span>
+    <span id="status-badge"></span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="toolbar">
+    <button class="btn primary btn-sm" onclick="openCommandModal('exec')">Execute Command</button>
+    <button class="btn btn-sm" id="sync-btn" onclick="requestSync()">Request Sync</button>
+    <div class="sync-bar" id="sync-bar">
+      <div class="sync-track"><div class="sync-fill" id="sync-fill"></div></div>
+      <span class="sync-label" id="sync-label">Sending…</span>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <div class="card card-body gauge-container">
+      <canvas id="cpu-gauge"></canvas>
+      <div class="gauge-label">CPU Usage</div>
+      <div class="gauge-value" id="cpu-val">0%</div>
+    </div>
+    <div class="card card-body gauge-container">
+      <canvas id="mem-gauge"></canvas>
+      <div class="gauge-label">Memory Usage</div>
+      <div class="gauge-value" id="mem-val">0%</div>
+    </div>
+    <div class="card card-body gauge-container">
+      <canvas id="disk-gauge"></canvas>
+      <div class="gauge-label">Disk Usage</div>
+      <div class="gauge-value" id="disk-val">0%</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header"><h3>System Information</h3></div>
+      <div class="card-body" id="os-info"></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h3>System Stats</h3></div>
+      <div class="card-body" id="sys-stats"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:24px;">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('processes')">Processes</div>
+      <div class="tab" onclick="switchTab('applications')">Applications</div>
+      <div class="tab" onclick="switchTab('commands')">Command History</div>
+    </div>
+
+    <div class="tab-content active" id="tab-processes">
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>PID</th><th>Name</th><th>Status</th><th>CPU %</th><th>Memory %</th><th>Command</th></tr></thead>
+          <tbody id="processes-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-applications">
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>Name</th><th>Version</th><th>Publisher</th><th>Installed</th></tr></thead>
+          <tbody id="apps-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-commands">
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>Time</th><th>Type</th><th>Detail</th><th>Status</th><th>Duration</th></tr></thead>
+          <tbody id="commands-tbody"></tbody>
+        </table>
+      </div>
+      <div id="command-detail" style="display:none;margin:12px 16px 16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-size:14px;color:#8b949e;">Command Result</span>
+          <button class="btn btn-sm" onclick="closeCommandDetail()">Close</button>
+        </div>
+        <pre id="command-result" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;max-height:400px;overflow:auto;font-size:13px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="command-modal">
+  <div class="modal" style="width:500px;">
+    <button class="close" onclick="closeCommandModal()">&times;</button>
+    <h2>Send Command</h2>
+    <div class="field">
+      <label>Type</label>
+      <input id="cmd-type" readonly style="opacity:0.7;">
+    </div>
+    <div class="field" id="cmd-payload-field">
+      <label>Command</label>
+      <textarea id="cmd-payload">{}</textarea>
+    </div>
+    <button class="btn primary" onclick="sendCommand()" style="width:100%;margin-top:8px;">Send</button>
+  </div>
+</div>
+
+<script>
+class RelativeTimeElement extends HTMLElement {
+  static get observedAttributes() { return ['datetime','threshold','prefix','format']; }
+  connectedCallback(){this.update()}disconnectedCallback(){this.stopTimer()}attributeChangedCallback(){this.update()}
+  scheduleUpdate(ms){this.stopTimer();this.timer=setTimeout(()=>this.update(),ms)}
+  stopTimer(){if(this.timer){clearTimeout(this.timer);this.timer=null}}
+  get datetime(){return this.getAttribute('datetime')||''}get threshold(){return this.getAttribute('threshold')||'P14D'}get prefix(){return this.getAttribute('prefix')||'on'}get format(){return this.getAttribute('format')||'relative'}
+  parseThreshold(iso){const m=iso.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);if(!m)return 30*24*60*60*1000;return((parseInt(m[1]||0,10)*24+parseInt(m[2]||0,10))*60+parseInt(m[3]||0,10))*60*1000+parseInt(m[4]||0,10)*1000}
+  update(){const dt=this.datetime;if(!dt)return;const d=new Date(dt);if(isNaN(d.getTime()))return;const now=Date.now(),diff=now-d.getTime(),abs=Math.abs(diff),th=this.parseThreshold(this.threshold);if(this.format==='datetime'||abs>th){this.textContent=this.fmtDt(d);this.scheduleUpdate(3600000)}else{this.textContent=this.fmtRel(diff);const dl=this.nextDelay(abs);if(dl!==null)this.scheduleUpdate(dl)}}
+  nextDelay(abs){const s=Math.floor(abs/1000),m=Math.floor(s/60),h=Math.floor(m/60),d=Math.floor(h/24);if(s<60)return 1000;if(m<60)return 60000;if(h<24)return 300000;if(d<7)return 3600000;if(d<30)return 21600000;return null}
+  getRtf(){if(!this._rtf||this._rtfL!==navigator.language){this._rtfL=navigator.language;this._rtf=new Intl.RelativeTimeFormat(navigator.language,{numeric:'auto',style:'long'})}return this._rtf}
+  fmtRel(diff){const rtf=this.getRtf(),abs=Math.abs(diff),sign=diff>0?-1:1,s=Math.floor(abs/1000),m=Math.floor(s/60),h=Math.floor(m/60),d=Math.floor(h/24),dt=new Date(Date.now()-diff),now=new Date(),mo=(now.getFullYear()-dt.getFullYear())*12+(now.getMonth()-dt.getMonth()),yr=Math.floor(Math.abs(mo)/12)*sign;if(s<60)return rtf.format(sign*s,'second');if(m<60)return rtf.format(sign*m,'minute');if(h<24)return rtf.format(sign*h,'hour');if(d<30)return rtf.format(sign*d,'day');if(Math.abs(mo)<12)return rtf.format(mo,'month');return rtf.format(yr,'year')}
+  fmtDt(d){const now=new Date(),sameY=d.getFullYear()===now.getFullYear(),opts={month:'short',day:'numeric',...(sameY?{}:{year:'numeric'})},fmt=new Intl.DateTimeFormat(navigator.language,opts).format(d);return this.prefix?`${this.prefix} ${fmt}`:fmt}
+}
+customElements.define('relative-time',RelativeTimeElement);
+</script>
+<script>
+const clientId = new URLSearchParams(location.search).get('id');
+if (!clientId) { location.href = '/'; }
+let cpuChart, memChart, diskChart;
+let commandHistory = [];
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
+
+function gaugeColor(pct) { if (pct < 60) return '#3fb950'; if (pct < 85) return '#d29922'; return '#f85149'; }
+function gaugeClass(pct) { if (pct < 60) return 'green'; if (pct < 85) return 'yellow'; return 'red'; }
+
+function initGauges() {
+  const opts = { type: 'doughnut', options: { circumference: 270, rotation: 225, cutout: '80%', responsive: true, maintainAspectRatio: true, aspectRatio: 1, plugins: { legend: { display: false }, tooltip: { enabled: false } } } };
+  cpuChart = new Chart(document.getElementById('cpu-gauge'), { ...opts, data: { datasets: [{ data: [0, 100], backgroundColor: ['#3fb950', '#21262d'], borderWidth: 0 }] } });
+  memChart = new Chart(document.getElementById('mem-gauge'), { ...opts, data: { datasets: [{ data: [0, 100], backgroundColor: ['#3fb950', '#21262d'], borderWidth: 0 }] } });
+  diskChart = new Chart(document.getElementById('disk-gauge'), { ...opts, data: { datasets: [{ data: [0, 100], backgroundColor: ['#3fb950', '#21262d'], borderWidth: 0 }] } });
+}
+
+function updateGauge(chart, pct, el) {
+  const color = gaugeColor(pct);
+  chart.data.datasets[0].data = [pct, 100 - pct]; chart.data.datasets[0].backgroundColor = [color, '#21262d']; chart.update();
+  el.textContent = pct.toFixed(1) + '%'; el.className = 'gauge-value ' + gaugeClass(pct);
+}
+
+function formatBytes(b) { if (!b) return '0 B'; const k = 1024, sizes = ['B','KB','MB','GB','TB']; const i = Math.floor(Math.log(b)/Math.log(k)); return parseFloat((b/Math.pow(k,i)).toFixed(1)) + ' ' + sizes[i]; }
+function formatUptime(s) { if (!s) return '-'; const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60); return `${d}d ${h}h ${m}m`; }
+
+async function loadClient() {
+  try {
+    const resp = await fetch(`/api/clients/${clientId}`);
+    if (!resp.ok) { document.getElementById('hostname').textContent = 'Client Not Found'; document.getElementById('os-info').innerHTML = `<div style="text-align:center;padding:40px;color:#f85149;">No client found with ID:<br><code style="color:#8b949e;">${esc(clientId)}</code><br><br><a href="/" style="color:#58a6ff;">← Back to Dashboard</a></div>`; return; }
+    const c = await resp.json();
+    document.getElementById('hostname').textContent = c.hostname || c.id;
+    document.getElementById('client-id').textContent = c.id;
+    document.getElementById('status-badge').innerHTML = `<span class="badge ${c.status}">${c.status}</span>`;
+    if (c.system_stats) { updateGauge(cpuChart, c.system_stats.cpu_percent, document.getElementById('cpu-val')); updateGauge(memChart, c.system_stats.memory_percent, document.getElementById('mem-val')); updateGauge(diskChart, c.system_stats.disk_percent, document.getElementById('disk-val')); renderStats(c.system_stats, c); }
+    if (c.os_info) { renderOSInfo(c.os_info); }
+    renderProcesses(c.processes || []); renderApps(c.applications || []);
+  } catch(e) { console.error('load error:', e); }
+}
+
+function renderOSInfo(info) {
+  document.getElementById('os-info').innerHTML = `
+    <div class="stat-row"><span class="label">OS</span><span class="value">${esc(info.name)}</span></div>
+    <div class="stat-row"><span class="label">Version</span><span class="value">${esc(info.version)}</span></div>
+    <div class="stat-row"><span class="label">Kernel</span><span class="value">${esc(info.kernel)}</span></div>
+    <div class="stat-row"><span class="label">Platform</span><span class="value">${esc(info.platform)}</span></div>
+    <div class="stat-row"><span class="label">Hostname</span><span class="value">${esc(info.hostname)}</span></div>
+    <div class="stat-row"><span class="label">Machine ID</span><span class="value">${esc(info.machine_id)}</span></div>
+    <div class="stat-row"><span class="label">Serial</span><span class="value">${esc(info.serial_number)}</span></div>`;
+}
+
+function renderStats(s, c) {
+  document.getElementById('sys-stats').innerHTML = `
+    <div class="stat-row"><span class="label">CPU</span><span class="value">${s.cpu_percent.toFixed(1)}%</span></div>
+    <div class="stat-row"><span class="label">Memory</span><span class="value">${formatBytes(s.memory_used)} / ${formatBytes(s.memory_total)} (${s.memory_percent.toFixed(1)}%)</span></div>
+    <div class="stat-row"><span class="label">Disk</span><span class="value">${formatBytes(s.disk_used)} / ${formatBytes(s.disk_total)} (${s.disk_percent.toFixed(1)}%)</span></div>
+    <div class="stat-row"><span class="label">Uptime</span><span class="value">${formatUptime(s.uptime_seconds)}</span></div>
+    <div class="stat-row"><span class="label">Load Avg</span><span class="value">${s.load_avg_1.toFixed(2)} / ${s.load_avg_5.toFixed(2)} / ${s.load_avg_15.toFixed(2)}</span></div>
+    <div class="stat-row"><span class="label">Last Heartbeat</span><span class="value"><relative-time datetime="${c.last_heartbeat || ''}"></relative-time></span></div>`;
+}
+
+function renderProcesses(procs) {
+  const tbody = document.getElementById('processes-tbody');
+  if (!procs || procs.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:20px;">No process data available</td></tr>'; return; }
+  tbody.innerHTML = procs.map(p => `<tr><td>${p.pid}</td><td>${esc(p.name)}</td><td>${esc(p.status)}</td><td>${p.cpu_percent.toFixed(1)}</td><td>${p.memory_percent.toFixed(1)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.command)}">${esc(p.command)}</td></tr>`).join('');
+}
+
+function renderApps(apps) {
+  const tbody = document.getElementById('apps-tbody');
+  if (!apps || apps.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#8b949e;padding:20px;">No application data available</td></tr>'; return; }
+  tbody.innerHTML = apps.map(a => `<tr><td>${esc(a.name)}</td><td>${esc(a.version)}</td><td>${esc(a.publisher)}</td><td>${esc(a.install_date)}</td></tr>`).join('');
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'commands') loadCommands();
+}
+
+let commandPollInterval = null;
+let commandCache = [];
+let syncCommandId = null;
+let syncTimer = null;
+
+function clearSyncTimer() { if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } }
+
+function updateSyncProgress() {
+  const bar = document.getElementById('sync-bar'), fill = document.getElementById('sync-fill'), label = document.getElementById('sync-label'), btn = document.getElementById('sync-btn');
+  if (!syncCommandId) { bar.style.display = 'none'; fill.style.width = '0%'; fill.className = 'sync-fill'; btn.disabled = false; btn.textContent = 'Request Sync'; clearSyncTimer(); return; }
+  const cmd = commandCache.find(c => c.id === syncCommandId); if (!cmd) return;
+  bar.style.display = 'flex';
+  if (cmd.status === 'pending') { fill.className = 'sync-fill pending'; fill.style.width = '10%'; label.textContent = 'Waiting for client…'; btn.disabled = true; btn.textContent = 'Syncing…'; }
+  else if (cmd.status === 'acknowledged') { fill.className = 'sync-fill acknowledged'; const ackTime = cmd.acknowledged_at ? new Date(cmd.acknowledged_at).getTime() : Date.now(); const elapsed = Date.now() - ackTime; fill.style.width = Math.min(90, 20 + (elapsed / 15000) * 70) + '%'; const remaining = Math.max(0, Math.round((15000 - elapsed) / 1000)); label.textContent = remaining > 0 ? `Syncing… ~${remaining}s` : 'Syncing…'; btn.disabled = true; btn.textContent = 'Syncing…'; }
+  else if (cmd.status === 'completed') { fill.className = 'sync-fill completed'; fill.style.width = '100%'; label.textContent = 'Sync complete'; btn.disabled = false; btn.textContent = 'Request Sync'; clearSyncTimer(); loadClient(); syncTimer = setTimeout(() => { syncCommandId = null; updateSyncProgress(); }, 2000); }
+  else if (cmd.status === 'failed' || cmd.status === 'expired') { fill.className = 'sync-fill ' + cmd.status; fill.style.width = '100%'; label.textContent = cmd.status === 'failed' ? 'Sync failed' : 'Sync expired'; btn.disabled = false; btn.textContent = 'Request Sync'; clearSyncTimer(); syncTimer = setTimeout(() => { syncCommandId = null; updateSyncProgress(); }, 4000); }
+}
+
+async function requestSync() {
+  const btn = document.getElementById('sync-btn'); btn.disabled = true; btn.textContent = 'Sending…';
+  try { const resp = await fetch(`/api/clients/${clientId}/commands`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'sync', payload: {}, timeout: 120 }) }); if (resp.ok) { const cmd = await resp.json(); syncCommandId = cmd.id; updateSyncProgress(); } else { btn.disabled = false; btn.textContent = 'Request Sync'; } }
+  catch(e) { console.error('sync request error:', e); btn.disabled = false; btn.textContent = 'Request Sync'; }
+}
+
+async function loadCommands() {
+  try {
+    const resp = await fetch(`/api/clients/${clientId}/commands`); const cmds = await resp.json(); commandCache = cmds || [];
+    const tbody = document.getElementById('commands-tbody');
+    const hasPending = commandCache.some(c => c.status === 'pending' || c.status === 'acknowledged');
+    if (hasPending) { startCommandPoll(); } else { stopCommandPoll(); }
+    if (!commandCache || commandCache.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e;padding:20px;">No commands yet</td></tr>'; return; }
+    tbody.innerHTML = commandCache.map(c => {
+      const detail = c.payload && c.payload.command ? esc(c.payload.command) : '—';
+      const statusHtml = `<span class="badge ${c.status}">${c.status}</span>`;
+      const spinner = (c.status === 'pending' || c.status === 'acknowledged') ? ' <span style="animation:spin 1s linear infinite;display:inline-block;">⟳</span>' : '';
+      let duration = '—';
+      if (c.completed_at && c.created_at) { const ms = new Date(c.completed_at) - new Date(c.created_at); if (ms < 1000) duration = ms + 'ms'; else if (ms < 60000) duration = (ms/1000).toFixed(1) + 's'; else duration = (ms/60000).toFixed(1) + 'm'; }
+      else if (c.acknowledged_at && c.created_at) { const ms = new Date() - new Date(c.acknowledged_at); duration = (ms < 60000 ? (ms/1000).toFixed(1) + 's' : (ms/60000).toFixed(1) + 'm') + '…'; }
+      const hasResult = c.result || c.error;
+      const clickable = hasResult ? `class="clickable" onclick="showCommandDetail('${esc(c.id)}')"` : '';
+      return `<tr ${clickable}><td><relative-time datetime="${c.created_at}"></relative-time></td><td>${esc(c.type)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${detail}">${detail}</td><td>${statusHtml}${spinner}</td><td>${duration}</td></tr>`;
+    }).join('');
+    updateSyncProgress();
+  } catch(e) { console.error('commands load error:', e); }
+}
+
+function showCommandDetail(cmdId) { const c = commandCache.find(x => x.id === cmdId); if (!c) return; const detail = document.getElementById('command-detail'); const result = document.getElementById('command-result'); let content = ''; if (c.error) content += `ERROR: ${c.error}\n\n`; if (c.result) { content += typeof c.result === 'string' ? c.result : JSON.stringify(c.result, null, 2); } result.textContent = content || '(no result)'; detail.style.display = 'block'; }
+function closeCommandDetail() { document.getElementById('command-detail').style.display = 'none'; }
+function startCommandPoll() { if (commandPollInterval) return; commandPollInterval = setInterval(loadCommands, 2000); }
+function stopCommandPoll() { if (commandPollInterval) { clearInterval(commandPollInterval); commandPollInterval = null; } }
+
+function openCommandModal(type) { document.getElementById('cmd-type').value = type; const pf = document.getElementById('cmd-payload-field'); if (type === 'exec') { pf.style.display = 'block'; document.getElementById('cmd-payload').value = '{"command":"uname -a"}'; } else { pf.style.display = 'none'; document.getElementById('cmd-payload').value = '{}'; } document.getElementById('command-modal').style.display = 'flex'; }
+function closeCommandModal() { document.getElementById('command-modal').style.display = 'none'; }
+
+async function sendCommand() {
+  const type = document.getElementById('cmd-type').value; let payload = {}; try { payload = JSON.parse(document.getElementById('cmd-payload').value); } catch(e) {}
+  try { const resp = await fetch(`/api/clients/${clientId}/commands`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, payload, timeout: 60 }) }); if (!resp.ok) { alert('Failed to send command: ' + resp.status); return; } closeCommandModal(); switchTab('commands'); loadCommands(); }
+  catch(e) { alert('Failed: ' + e.message); }
+}
+
+function connectWS() { const proto = location.protocol === 'https:' ? 'wss' : 'ws'; const ws = new WebSocket(`${proto}://${location.host}/ws`); ws.onmessage = (e) => { const msg = JSON.parse(e.data); if (msg.type === 'command_acknowledged' || msg.type === 'command_completed' || msg.type === 'command_created' || msg.type === 'client_data_updated') { loadCommands(); loadClient(); } }; ws.onclose = () => setTimeout(connectWS, 3000); }
+
+initGauges(); loadClient(); connectWS(); setInterval(loadClient, 15000);
+</script>
+</body>
+</html>
