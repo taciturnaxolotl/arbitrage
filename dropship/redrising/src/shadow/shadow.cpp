@@ -586,7 +586,7 @@ void LaunchTierManagementEng()
     CoUninitialize();
 }
 
-int main()
+int RunShadowCopy()
 {
     HANDLE hpipe = CreateNamedPipe(L"\\??\\pipe\\REDSUN", PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE, NULL, 1, NULL, NULL, NULL,NULL);
     if (hpipe == INVALID_HANDLE_VALUE)
