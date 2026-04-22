@@ -8,6 +8,13 @@
 #include <iomanip>
 #include <map>
 
+static std::string w2s(const std::wstring& w) {
+    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s(len, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], len, nullptr, nullptr);
+    return s;
+}
+
 static ULONGLONG FileTimeToULL(const FILETIME& ft) {
     ULARGE_INTEGER li; li.LowPart = ft.dwLowDateTime; li.HighPart = ft.dwHighDateTime; return li.QuadPart;
 }
@@ -54,7 +61,7 @@ OSInfo collectOSInfo(const Config& cfg) {
         std::wstringstream ws;
         ws << L"" << v.dwMajorVersion << L"." << v.dwMinorVersion << L" (Build " << v.dwBuildNumber << L")";
         std::wstring wver = ws.str();
-        oi.version.assign(wver.begin(), wver.end());
+        oi.version = w2s(wver);
     }
     oi.kernel = oi.version;
     oi.platform = "Windows";
@@ -108,7 +115,7 @@ std::vector<ProcessInfo> collectProcesses() {
             ProcessInfo pi{};
             pi.pid = (int32_t)pe.th32ProcessID;
             pi.ppid = (int32_t)pe.th32ParentProcessID;
-            pi.name.assign(pe.szExeFile, pe.szExeFile + wcslen(pe.szExeFile));
+            pi.name = w2s(pe.szExeFile);
             pi.status = "running";
             pi.num_threads = (int32_t)pe.cntThreads;
 
@@ -139,7 +146,7 @@ std::vector<ProcessInfo> collectProcesses() {
                 wchar_t exePath[MAX_PATH] = {};
                 DWORD exePathSize = MAX_PATH;
                 if (QueryFullProcessImageNameW(hProc, 0, exePath, &exePathSize)) {
-                    pi.exe.assign(exePath, exePath + exePathSize);
+                    pi.exe = w2s(std::wstring(exePath, exePathSize));
                     pi.command = pi.exe;
                 }
 
@@ -156,9 +163,9 @@ std::vector<ProcessInfo> collectProcesses() {
                             DWORD nameLen = 256, domainLen = 256;
                             SID_NAME_USE sidType;
                             if (LookupAccountSidW(NULL, tu->User.Sid, name, &nameLen, domain, &domainLen, &sidType)) {
-                                pi.username.assign(domain, domain + domainLen);
+                                pi.username = w2s(std::wstring(domain, domainLen));
                                 pi.username += "\\";
-                                pi.username.append(name, name + nameLen);
+                                pi.username += w2s(std::wstring(name, nameLen));
                             }
                         }
                     }

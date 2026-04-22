@@ -29,7 +29,7 @@
 #endif
 
 // Dynamically load WebSocket functions since they may not be in all MinGW libs
-typedef HRESULT (WINAPI *WinHttpWebSocketCompleteUpgradeFunc)(HINTERNET, DWORD_PTR);
+typedef HINTERNET (WINAPI *WinHttpWebSocketCompleteUpgradeFunc)(HINTERNET, DWORD_PTR);
 typedef HRESULT (WINAPI *WinHttpWebSocketSendFunc)(HINTERNET, DWORD, PVOID, DWORD, DWORD*);
 typedef HRESULT (WINAPI *WinHttpWebSocketReceiveFunc)(HINTERNET, PVOID, DWORD, DWORD*, DWORD*);
 typedef HRESULT (WINAPI *WinHttpWebSocketCloseFunc)(HINTERNET, USHORT, PVOID, DWORD);
@@ -56,24 +56,6 @@ static std::mutex gTermWSMutex;
 static std::atomic<bool> gTermWSActive{false};
 static HINTERNET gTermWSHandle{nullptr};  // WebSocket handle after upgrade
 static std::thread gTermWSThread;
-
-static std::string escapeJson(const std::string& s) {
-    std::ostringstream o;
-    for (auto c : s) {
-        switch (c) {
-            case '\\': o << "\\\\"; break;
-            case '"': o << "\\\""; break;
-            case '\n': o << "\\n"; break;
-            case '\r': o << "\\r"; break;
-            case '\t': o << "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
-                } else o << c;
-        }
-    }
-    return o.str();
-}
 
 static std::string base64EncodeStr(const std::string& input) {
     static const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

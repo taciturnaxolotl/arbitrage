@@ -1,9 +1,11 @@
 #include "client.h"
+#include "commands.h"
 #include <windows.h>
 #include <winhttp.h>
 #include <iphlpapi.h>
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 #include <vector>
 #include <regex>
 #include "stats.h"
@@ -30,6 +32,22 @@ static std::string base64Encode(const std::string& input) {
 
 static std::wstring s2w(const std::string& s) {
     return std::wstring(s.begin(), s.end());
+}
+
+std::string escapeJson(const std::string& s) {
+    std::ostringstream o; for (auto c: s) {
+        switch (c) {
+            case '\\': o << "\\\\"; break;
+            case '"': o << "\\\""; break;
+            case '\n': o << "\\n"; break;
+            case '\r': o << "\\r"; break;
+            case '\t': o << "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
+                } else o << c;
+        }
+    } return o.str();
 }
 
 bool httpPost(const Config& cfg, const std::string& endpoint, const std::string& body, std::string& response) {
@@ -200,22 +218,6 @@ bool registerClient(Config& cfg) {
         cfg.token = resp.substr(tokStart, tokEnd - tokStart);
     }
     return !cfg.clientID.empty() && !cfg.token.empty();
-}
-
-static std::string escapeJson(const std::string& s) {
-    std::ostringstream o; for (auto c: s) {
-        switch (c) {
-            case '\\': o << "\\\\"; break;
-            case '"': o << "\\\""; break;
-            case '\n': o << "\\n"; break;
-            case '\r': o << "\\r"; break;
-            case '\t': o << "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
-                } else o << c;
-        }
-    } return o.str();
 }
 
 bool sendHeartbeat(const Config& cfg) {

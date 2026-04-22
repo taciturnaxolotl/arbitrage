@@ -19,7 +19,7 @@ RequestExecutionLevel admin
 
 Section "Install RedRising"
     SetOutPath "$INSTDIR"
-    File "..\\..\\build\\Release\\RedRising.exe"
+    File "..\\..\\build\\src\\Release\\RedRising.exe"
 
     ; If the user checked the box, register as a System service
     StrCmp $MUI_LICENSEPAGE_CHECKED "1" 0 +3

@@ -1,0 +1,3 @@
+RedRising Client Software
+
+This software is provided as-is without any warranty.

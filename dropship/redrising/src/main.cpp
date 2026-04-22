@@ -5,6 +5,7 @@ extern int RunShadowCopy();
 #include <Windows.h>
 #include <iostream>
 #include <cstdlib>
+#include <cstring>
 
 int main() {
     Config cfg;

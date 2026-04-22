@@ -33,4 +33,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RedRising.exe
-          path: dropship/redrising/build/Release/RedRising.exe
+          path: dropship/redrising/build/src/Release/RedRising.exe
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Build NSIS installer
+        working-directory: dropship/redrising/installer/nsis
+        run: |
+          $env:Path = "C:\Program Files (x86)\NSIS;$env:Path"
+          makensis redrising.nsi
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedRisingSetup.exe
+          path: dropship/redrising/installer/nsis/RedRisingSetup.exe

