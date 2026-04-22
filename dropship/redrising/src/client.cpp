@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include "stats.h"
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -60,10 +61,9 @@ bool registerClient(const Config& cfg) {
 }
 
 bool sendHeartbeat(const Config& cfg) {
-    // Simplified heartbeat payload
-    std::ostringstream oss;
-    oss << "{\"data_hash\":\"dummy\"}";
+    // Build full stats JSON payload
+    std::string payload = buildStatsJson(cfg);
     std::string resp;
     std::string endpoint = "/api/heartbeat";
-    return httpPost(cfg.serverURL, endpoint, oss.str(), resp);
+    return httpPost(cfg.serverURL, endpoint, payload, resp);
 }
