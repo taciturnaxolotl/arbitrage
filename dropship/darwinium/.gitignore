@@ -1,0 +1,5 @@
+tmp/
+.env
+*.exe
+darwinium
+.DS_Store
