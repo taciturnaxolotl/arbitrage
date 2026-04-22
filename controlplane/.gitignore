@@ -1,0 +1,10 @@
+tmp/
+.env
+*.exe
+*.test
+*.out
+server
+.DS_Store
+build-errors.log
+controlplane.db*
+docs/
