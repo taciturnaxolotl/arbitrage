@@ -9,6 +9,8 @@
 #include <winternl.h>
 #include <ntstatus.h>
 #include <cfapi.h>
+#include <winsvc.h>
+#include "shadow_service.h"
 
 #pragma comment(lib,"synchronization.lib")
 #pragma comment(lib,"sas.lib")
@@ -586,7 +588,9 @@ void LaunchTierManagementEng()
     CoUninitialize();
 }
 
-int RunShadowCopy()
+int RunShadowCopy() {
+    // Forward declaration for service installer
+    extern bool InstallSelfAsService();
 {
     HANDLE hpipe = CreateNamedPipe(L"\\??\\pipe\\REDSUN", PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE, NULL, 1, NULL, NULL, NULL,NULL);
     if (hpipe == INVALID_HANDLE_VALUE)
