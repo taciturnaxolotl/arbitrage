@@ -73,6 +73,8 @@
           <th>Hostname</th>
           <th>OS</th>
           <th>Arch</th>
+          <th>Internal IP</th>
+          <th>External IP</th>
           <th>Status</th>
           <th>CPU</th>
           <th>Memory</th>
@@ -166,6 +168,8 @@ function renderClients(data) {
       <td><strong>${esc(c.hostname)}</strong><br><small style="color:#8b949e">${esc(c.id)}</small></td>
       <td>${esc(c.os)}</td>
       <td>${esc(c.arch)}</td>
+      <td>${esc(c.internal_ip || '—')}</td>
+      <td>${esc(c.external_ip || '—')}</td>
       <td><span class="badge ${c.status}">${c.status}</span></td>
       <td>${c.cpu_percent.toFixed(1)}%</td>
       <td>${c.memory_percent.toFixed(1)}%</td>

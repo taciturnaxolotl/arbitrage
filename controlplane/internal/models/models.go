@@ -8,7 +8,8 @@ type Client struct {
 	Hostname      string    `json:"hostname"`
 	OS            string    `json:"os"`
 	Arch          string    `json:"arch"`
-	IP            string    `json:"ip"`
+	InternalIP    string    `json:"internal_ip"`
+	ExternalIP    string    `json:"external_ip"`
 	Version       string    `json:"version"`
 	Status        string    `json:"status"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
@@ -90,11 +91,12 @@ type Command struct {
 }
 
 type RegisterRequest struct {
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	IP       string `json:"ip"`
-	Version  string `json:"version"`
+	Hostname   string `json:"hostname"`
+	OS         string `json:"os"`
+	Arch       string `json:"arch"`
+	InternalIP string `json:"internal_ip"`
+	ExternalIP string `json:"external_ip"`
+	Version    string `json:"version"`
 }
 
 type RegisterResponse struct {
@@ -104,6 +106,8 @@ type RegisterResponse struct {
 
 type HeartbeatRequest struct {
 	DataHash    string       `json:"data_hash,omitempty"`
+	InternalIP  string       `json:"internal_ip,omitempty"`
+	ExternalIP  string       `json:"external_ip,omitempty"`
 	SystemStats *SystemStats `json:"system_stats,omitempty"`
 	OSInfo      *OSInfo      `json:"os_info,omitempty"`
 }
@@ -155,6 +159,8 @@ type ClientSummary struct {
 	Hostname      string    `json:"hostname"`
 	OS            string    `json:"os"`
 	Arch          string    `json:"arch"`
+	InternalIP    string    `json:"internal_ip"`
+	ExternalIP    string    `json:"external_ip"`
 	Status        string    `json:"status"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
 	CPUPercent    float64   `json:"cpu_percent"`

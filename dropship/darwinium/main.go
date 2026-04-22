@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -35,11 +36,12 @@ type Config struct {
 }
 
 type RegisterRequest struct {
-	Hostname string `json:"hostname"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	IP       string `json:"ip"`
-	Version  string `json:"version"`
+	Hostname   string `json:"hostname"`
+	OS         string `json:"os"`
+	Arch       string `json:"arch"`
+	InternalIP string `json:"internal_ip"`
+	ExternalIP string `json:"external_ip"`
+	Version    string `json:"version"`
 }
 
 type RegisterResponse struct {
@@ -104,6 +106,8 @@ type ProcessInfo struct {
 
 type HeartbeatRequest struct {
 	DataHash    string       `json:"data_hash,omitempty"`
+	InternalIP  string       `json:"internal_ip,omitempty"`
+	ExternalIP  string       `json:"external_ip,omitempty"`
 	SystemStats *SystemStats `json:"system_stats,omitempty"`
 	OSInfo      *OSInfo      `json:"os_info,omitempty"`
 }
@@ -251,11 +255,12 @@ func registerWithRetry(cfg *Config) error {
 
 func register(cfg *Config) error {
 	req := RegisterRequest{
-		Hostname: cfg.Hostname,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		IP:       getLocalIP(),
-		Version:  "0.2.0",
+		Hostname:   cfg.Hostname,
+		OS:         runtime.GOOS,
+		Arch:       runtime.GOARCH,
+		InternalIP: getLocalIP(),
+		ExternalIP: getExternalIP(),
+		Version:    "0.2.0",
 	}
 
 	body, err := json.Marshal(req)
@@ -293,6 +298,8 @@ func heartbeatLoop(cfg *Config) {
 
 		hb := HeartbeatRequest{
 			DataHash:    dataHash,
+			InternalIP:  getLocalIP(),
+			ExternalIP:  getExternalIP(),
 			SystemStats: stats,
 			OSInfo:      osInfo,
 		}
@@ -814,7 +821,21 @@ func collectProcesses() ([]ProcessInfo, error) {
 func getLocalIP() string {
 	out, err := exec.Command("ipconfig", "getifaddr", "en0").Output()
 	if err != nil {
-		return "unknown"
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func getExternalIP() string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("https://api.ipify.org")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
 	}
 	return strings.TrimSpace(string(out))
 }

@@ -235,11 +235,14 @@ function updateGauge(chart, pct, el) {
 function formatBytes(b) { if (!b) return '0 B'; const k = 1024, sizes = ['B','KB','MB','GB','TB']; const i = Math.floor(Math.log(b)/Math.log(k)); return parseFloat((b/Math.pow(k,i)).toFixed(1)) + ' ' + sizes[i]; }
 function formatUptime(s) { if (!s) return '-'; const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60); return `${d}d ${h}h ${m}m`; }
 
+let currentClient = null;
+
 async function loadClient() {
   try {
     const resp = await fetch(`/api/clients/${clientId}`);
     if (!resp.ok) { document.getElementById('hostname').textContent = 'Client Not Found'; document.getElementById('os-info').innerHTML = `<div style="text-align:center;padding:40px;color:#f85149;">No client found with ID:<br><code style="color:#8b949e;">${esc(clientId)}</code><br><br><a href="/" style="color:#58a6ff;">← Back to Dashboard</a></div>`; return; }
     const c = await resp.json();
+    currentClient = c;
     document.getElementById('hostname').textContent = c.hostname || c.id;
     document.getElementById('client-id').textContent = c.id;
     document.getElementById('status-badge').innerHTML = `<span class="badge ${c.status}">${c.status}</span>`;
@@ -252,12 +255,15 @@ async function loadClient() {
 }
 
 function renderOSInfo(info) {
+  const c = currentClient || {};
   document.getElementById('os-info').innerHTML = `
     <div class="stat-row"><span class="label">OS</span><span class="value">${esc(info.name)}</span></div>
     <div class="stat-row"><span class="label">Version</span><span class="value">${esc(info.version)}</span></div>
     <div class="stat-row"><span class="label">Kernel</span><span class="value">${esc(info.kernel)}</span></div>
     <div class="stat-row"><span class="label">Platform</span><span class="value">${esc(info.platform)}</span></div>
     <div class="stat-row"><span class="label">Hostname</span><span class="value">${esc(info.hostname)}</span></div>
+    <div class="stat-row"><span class="label">Internal IP</span><span class="value">${esc(c.internal_ip || '—')}</span></div>
+    <div class="stat-row"><span class="label">External IP</span><span class="value">${esc(c.external_ip || '—')}</span></div>
     <div class="stat-row"><span class="label">Machine ID</span><span class="value">${esc(info.machine_id)}</span></div>
     <div class="stat-row"><span class="label">Serial</span><span class="value">${esc(info.serial_number)}</span></div>`;
 }

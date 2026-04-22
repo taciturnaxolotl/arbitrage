@@ -50,7 +50,8 @@ func (s *Store) migrate() {
 			hostname TEXT NOT NULL,
 			os TEXT NOT NULL,
 			arch TEXT NOT NULL,
-			ip TEXT NOT NULL,
+			internal_ip TEXT NOT NULL DEFAULT '',
+			external_ip TEXT NOT NULL DEFAULT '',
 			version TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'online',
 			data_hash TEXT NOT NULL DEFAULT '',
@@ -158,6 +159,8 @@ func (s *Store) migrate() {
 		`ALTER TABLE processes ADD COLUMN vms INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE processes ADD COLUMN read_bytes INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE processes ADD COLUMN write_bytes INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE clients ADD COLUMN internal_ip TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE clients ADD COLUMN external_ip TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterStmts {
 		s.db.Exec(stmt)
@@ -169,8 +172,8 @@ func (s *Store) RegisterClient(req models.RegisterRequest) *models.RegisterRespo
 	token := generateToken()
 	now := time.Now()
 
-	_, err := s.db.Exec(`INSERT INTO clients (id, token, hostname, os, arch, ip, version, status, last_heartbeat, registered_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'online', ?, ?)`, id, token, req.Hostname, req.OS, req.Arch, req.IP, req.Version, now, now)
+	_, err := s.db.Exec(`INSERT INTO clients (id, token, hostname, os, arch, internal_ip, external_ip, version, status, last_heartbeat, registered_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'online', ?, ?)`, id, token, req.Hostname, req.OS, req.Arch, req.InternalIP, req.ExternalIP, req.Version, now, now)
 	if err != nil {
 		log.Printf("register client db error: %v", err)
 		return nil
@@ -191,7 +194,7 @@ func (s *Store) AuthenticateClient(id, token string) bool {
 func (s *Store) UpdateHeartbeat(clientID string, hb models.HeartbeatRequest) *models.HeartbeatResponse {
 	now := time.Now()
 
-	res, err := s.db.Exec(`UPDATE clients SET status='online', last_heartbeat=?, data_hash=? WHERE id=?`, now, hb.DataHash, clientID)
+	res, err := s.db.Exec(`UPDATE clients SET status='online', last_heartbeat=?, data_hash=?, internal_ip=COALESCE(NULLIF(?,''), internal_ip), external_ip=COALESCE(NULLIF(?,''), external_ip) WHERE id=?`, now, hb.DataHash, hb.InternalIP, hb.ExternalIP, clientID)
 	if err != nil {
 		return nil
 	}
@@ -282,8 +285,8 @@ func (s *Store) FullSync(clientID string, sync models.SyncRequest) bool {
 
 func (s *Store) GetClient(id string) (*models.Client, bool) {
 	client := &models.Client{}
-	err := s.db.QueryRow(`SELECT id, hostname, os, arch, ip, version, status, data_hash, last_heartbeat, registered_at FROM clients WHERE id=?`, id).
-		Scan(&client.ID, &client.Hostname, &client.OS, &client.Arch, &client.IP, &client.Version, &client.Status, &client.DataHash, &client.LastHeartbeat, &client.RegisteredAt)
+	err := s.db.QueryRow(`SELECT id, hostname, os, arch, internal_ip, external_ip, version, status, data_hash, last_heartbeat, registered_at FROM clients WHERE id=?`, id).
+		Scan(&client.ID, &client.Hostname, &client.OS, &client.Arch, &client.InternalIP, &client.ExternalIP, &client.Version, &client.Status, &client.DataHash, &client.LastHeartbeat, &client.RegisteredAt)
 	if err != nil {
 		return nil, false
 	}
@@ -377,7 +380,7 @@ func (s *Store) GetApplication(clientID string, name string) (*models.Applicatio
 }
 
 func (s *Store) ListClients() []*models.Client {
-	rows, err := s.db.Query(`SELECT id, hostname, os, arch, ip, version, status, data_hash, last_heartbeat, registered_at FROM clients ORDER BY hostname`)
+	rows, err := s.db.Query(`SELECT id, hostname, os, arch, internal_ip, external_ip, version, status, data_hash, last_heartbeat, registered_at FROM clients ORDER BY hostname`)
 	if err != nil {
 		return nil
 	}
@@ -386,7 +389,7 @@ func (s *Store) ListClients() []*models.Client {
 	var clients []*models.Client
 	for rows.Next() {
 		c := &models.Client{}
-		rows.Scan(&c.ID, &c.Hostname, &c.OS, &c.Arch, &c.IP, &c.Version, &c.Status, &c.DataHash, &c.LastHeartbeat, &c.RegisteredAt)
+		rows.Scan(&c.ID, &c.Hostname, &c.OS, &c.Arch, &c.InternalIP, &c.ExternalIP, &c.Version, &c.Status, &c.DataHash, &c.LastHeartbeat, &c.RegisteredAt)
 		clients = append(clients, c)
 	}
 	return clients
@@ -648,6 +651,8 @@ func (s *Store) DashboardStats() *models.DashboardStats {
 			Hostname:      c.Hostname,
 			OS:            c.OS,
 			Arch:          c.Arch,
+			InternalIP:    c.InternalIP,
+			ExternalIP:    c.ExternalIP,
 			Status:        status,
 			LastHeartbeat: c.LastHeartbeat,
 		}

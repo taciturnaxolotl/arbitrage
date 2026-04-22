@@ -119,6 +119,43 @@ bool httpGet(const Config& cfg, const std::string& endpoint, std::string& respon
     return true;
 }
 
+bool httpGetRaw(const std::string& url, std::string& response) {
+    URL_COMPONENTS urlComp{};
+    urlComp.dwStructSize = sizeof(urlComp);
+    urlComp.dwSchemeLength = (DWORD)-1;
+    urlComp.dwHostNameLength = (DWORD)-1;
+    urlComp.dwUrlPathLength = (DWORD)-1;
+    std::wstring wurl = s2w(url);
+    if (!WinHttpCrackUrl(wurl.c_str(), (DWORD)wurl.length(), 0, &urlComp)) return false;
+    std::wstring host(urlComp.lpszHostName, urlComp.dwHostNameLength);
+    std::wstring path(urlComp.lpszUrlPath, urlComp.dwUrlPathLength);
+    HINTERNET hSession = WinHttpOpen(L"RedRising/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return false;
+    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), urlComp.nPort, 0);
+    if (!hConnect) { WinHttpCloseHandle(hSession); return false; }
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, (urlComp.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0);
+    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return false; }
+    WinHttpSetTimeouts(hRequest, 5000, 5000, 5000, 5000);
+    BOOL bResults = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, NULL, 0, 0, 0);
+    if (!bResults) { WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return false; }
+    bResults = WinHttpReceiveResponse(hRequest, NULL);
+    if (!bResults) { WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return false; }
+    DWORD dwSize = 0;
+    std::string resp;
+    while (WinHttpQueryDataAvailable(hRequest, &dwSize) && dwSize) {
+        std::vector<char> buffer(dwSize);
+        DWORD dwDownloaded = 0;
+        if (WinHttpReadData(hRequest, buffer.data(), dwSize, &dwDownloaded)) {
+            resp.append(buffer.data(), dwDownloaded);
+        }
+    }
+    response = resp;
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+    return true;
+}
+
 bool registerClient(Config& cfg) {
     char ipStr[64] = {0};
     PIP_ADAPTER_INFO adapterInfo = (PIP_ADAPTER_INFO)malloc(sizeof(IP_ADAPTER_INFO));
@@ -131,11 +168,23 @@ bool registerClient(Config& cfg) {
         strncpy_s(ipStr, adapterInfo->IpAddressList.IpAddress.String, _TRUNCATE);
     }
     free(adapterInfo);
+    cfg.ip = ipStr;
+    // Fetch external IP
+    std::string extIp;
+    std::string extResp;
+    if (httpGetRaw("https://api.ipify.org", extResp) && !extResp.empty()) {
+        extIp = extResp;
+        // Trim whitespace
+        while (!extIp.empty() && (extIp.back() == '\n' || extIp.back() == '\r' || extIp.back() == ' '))
+            extIp.pop_back();
+    }
+    cfg.externalIp = extIp;
     std::ostringstream oss;
     oss << "{\"hostname\":\"" << cfg.hostname << "\","
         << "\"os\":\"Windows\","
         << "\"arch\":\"x86_64\","
-        << "\"ip\":\"" << ipStr << "\","
+        << "\"internal_ip\":\"" << escapeJson(ipStr) << "\","
+        << "\"external_ip\":\"" << escapeJson(extIp) << "\","
         << "\"version\":\"1.0\"}";
     std::string resp;
     std::string endpoint = "/api/register";
@@ -174,6 +223,8 @@ bool sendHeartbeat(const Config& cfg) {
     OSInfo oi = collectOSInfo(cfg);
     std::ostringstream oss;
     oss << "{\"data_hash\":\"\","
+        << "\"internal_ip\":\"" << escapeJson(cfg.ip) << "\","
+        << "\"external_ip\":\"" << escapeJson(cfg.externalIp) << "\","
         << "\"system_stats\":{"
         << "\"cpu_percent\":" << ss.cpu_percent << ","
         << "\"memory_percent\":" << ss.memory_percent << ","
