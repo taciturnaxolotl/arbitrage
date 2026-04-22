@@ -245,7 +245,7 @@ func register(cfg *Config) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("registration returned %d", resp.StatusCode)
 	}
 

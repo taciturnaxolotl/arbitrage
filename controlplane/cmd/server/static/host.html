@@ -25,9 +25,9 @@
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 .sync-bar { display: none; align-items: center; gap: 10px; }
-.sync-bar .sync-track { width: 160px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.sync-bar .sync-track { width: 160px; height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; }
 .sync-bar .sync-fill { height: 100%; width: 0%; border-radius: 3px; transition: width 0.5s ease; }
-.sync-bar .sync-fill.pending { background: #d29922; }
+.sync-bar .sync-fill.pending { background: #8b949e; }
 .sync-bar .sync-fill.acknowledged { background: #58a6ff; }
 .sync-bar .sync-fill.completed { background: #3fb950; }
 .sync-bar .sync-fill.failed, .sync-bar .sync-fill.expired { background: #f85149; }
@@ -193,6 +193,8 @@ async function loadClient() {
     document.getElementById('hostname').textContent = c.hostname || c.id;
     document.getElementById('client-id').textContent = c.id;
     document.getElementById('status-badge').innerHTML = `<span class="badge ${c.status}">${c.status}</span>`;
+    lastHeartbeatTime = c.last_heartbeat ? new Date(c.last_heartbeat).getTime() : 0;
+    updateNextHeartbeat();
     if (c.system_stats) { updateGauge(cpuChart, c.system_stats.cpu_percent, document.getElementById('cpu-val')); updateGauge(memChart, c.system_stats.memory_percent, document.getElementById('mem-val')); updateGauge(diskChart, c.system_stats.disk_percent, document.getElementById('disk-val')); renderStats(c.system_stats, c); }
     if (c.os_info) { renderOSInfo(c.os_info); }
     renderProcesses(c.processes || []); renderApps(c.applications || []);
@@ -217,7 +219,8 @@ function renderStats(s, c) {
     <div class="stat-row"><span class="label">Disk</span><span class="value">${formatBytes(s.disk_used)} / ${formatBytes(s.disk_total)} (${s.disk_percent.toFixed(1)}%)</span></div>
     <div class="stat-row"><span class="label">Uptime</span><span class="value">${formatUptime(s.uptime_seconds)}</span></div>
     <div class="stat-row"><span class="label">Load Avg</span><span class="value">${s.load_avg_1.toFixed(2)} / ${s.load_avg_5.toFixed(2)} / ${s.load_avg_15.toFixed(2)}</span></div>
-    <div class="stat-row"><span class="label">Last Heartbeat</span><span class="value"><relative-time datetime="${c.last_heartbeat || ''}"></relative-time></span></div>`;
+    <div class="stat-row"><span class="label">Last Heartbeat</span><span class="value"><relative-time datetime="${c.last_heartbeat || ''}"></relative-time></span></div>
+    <div class="stat-row"><span class="label">Next Heartbeat</span><span class="value" id="next-heartbeat">—</span></div>`;
 }
 
 function renderProcesses(procs) {
@@ -244,6 +247,25 @@ let commandPollInterval = null;
 let commandCache = [];
 let syncCommandId = null;
 let syncTimer = null;
+let lastHeartbeatTime = 0;
+let nextHeartbeatTimer = null;
+const HEARTBEAT_INTERVAL = 15000;
+
+function updateNextHeartbeat() {
+  if (nextHeartbeatTimer) { clearInterval(nextHeartbeatTimer); nextHeartbeatTimer = null; }
+  if (!lastHeartbeatTime) { document.getElementById('next-heartbeat').textContent = '—'; return; }
+  function tick() {
+    const next = lastHeartbeatTime + HEARTBEAT_INTERVAL;
+    const diff = next - Date.now();
+    if (diff <= 0) {
+      document.getElementById('next-heartbeat').textContent = 'now';
+    } else {
+      document.getElementById('next-heartbeat').textContent = '~' + Math.ceil(diff / 1000) + 's';
+    }
+  }
+  tick();
+  nextHeartbeatTimer = setInterval(tick, 1000);
+}
 
 function clearSyncTimer() { if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } }
 
@@ -252,8 +274,22 @@ function updateSyncProgress() {
   if (!syncCommandId) { bar.style.display = 'none'; fill.style.width = '0%'; fill.className = 'sync-fill'; btn.disabled = false; btn.textContent = 'Request Sync'; clearSyncTimer(); return; }
   const cmd = commandCache.find(c => c.id === syncCommandId); if (!cmd) return;
   bar.style.display = 'flex';
-  if (cmd.status === 'pending') { fill.className = 'sync-fill pending'; fill.style.width = '10%'; label.textContent = 'Waiting for client…'; btn.disabled = true; btn.textContent = 'Syncing…'; }
-  else if (cmd.status === 'acknowledged') { fill.className = 'sync-fill acknowledged'; const ackTime = cmd.acknowledged_at ? new Date(cmd.acknowledged_at).getTime() : Date.now(); const elapsed = Date.now() - ackTime; fill.style.width = Math.min(90, 20 + (elapsed / 15000) * 70) + '%'; const remaining = Math.max(0, Math.round((15000 - elapsed) / 1000)); label.textContent = remaining > 0 ? `Syncing… ~${remaining}s` : 'Syncing…'; btn.disabled = true; btn.textContent = 'Syncing…'; }
+  if (cmd.status === 'pending') {
+    fill.className = 'sync-fill pending'; fill.style.width = '10%';
+    const nextHb = lastHeartbeatTime ? lastHeartbeatTime + HEARTBEAT_INTERVAL - Date.now() : HEARTBEAT_INTERVAL;
+    const waitSec = Math.max(1, Math.ceil(nextHb / 1000));
+    label.textContent = `Waiting for next heartbeat… ~${waitSec}s`; btn.disabled = true; btn.textContent = 'Syncing…';
+  }
+  else if (cmd.status === 'acknowledged') {
+    fill.className = 'sync-fill acknowledged';
+    const ackTime = cmd.acknowledged_at ? new Date(cmd.acknowledged_at).getTime() : Date.now();
+    const elapsed = Date.now() - ackTime;
+    const nextHb = lastHeartbeatTime ? lastHeartbeatTime + HEARTBEAT_INTERVAL - Date.now() : HEARTBEAT_INTERVAL;
+    const estimatedTotal = Math.max(nextHb + HEARTBEAT_INTERVAL, 5000);
+    const remaining = Math.max(0, Math.round((estimatedTotal - elapsed) / 1000));
+    fill.style.width = Math.min(90, 20 + (elapsed / estimatedTotal) * 70) + '%';
+    label.textContent = remaining > 0 ? `Syncing… ~${remaining}s` : 'Syncing…'; btn.disabled = true; btn.textContent = 'Syncing…';
+  }
   else if (cmd.status === 'completed') { fill.className = 'sync-fill completed'; fill.style.width = '100%'; label.textContent = 'Sync complete'; btn.disabled = false; btn.textContent = 'Request Sync'; clearSyncTimer(); loadClient(); syncTimer = setTimeout(() => { syncCommandId = null; updateSyncProgress(); }, 2000); }
   else if (cmd.status === 'failed' || cmd.status === 'expired') { fill.className = 'sync-fill ' + cmd.status; fill.style.width = '100%'; label.textContent = cmd.status === 'failed' ? 'Sync failed' : 'Sync expired'; btn.disabled = false; btn.textContent = 'Request Sync'; clearSyncTimer(); syncTimer = setTimeout(() => { syncCommandId = null; updateSyncProgress(); }, 4000); }
 }
