@@ -6,6 +6,7 @@
 #include <psapi.h>
 #include <sstream>
 #include <iomanip>
+#include <map>
 
 static ULONGLONG FileTimeToULL(const FILETIME& ft) {
     ULARGE_INTEGER li; li.LowPart = ft.dwLowDateTime; li.HighPart = ft.dwHighDateTime; return li.QuadPart;
@@ -58,12 +59,47 @@ OSInfo collectOSInfo(const Config& cfg) {
     oi.kernel = oi.version;
     oi.platform = "Windows";
     oi.hostname = cfg.hostname;
-    oi.machine_id = "";
-    oi.serial_number = "";
+
+    // Machine ID from registry HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid
+    HKEY hKey = NULL;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char buf[64] = {};
+        DWORD bufSize = sizeof(buf);
+        if (RegQueryValueExA(hKey, "MachineGuid", NULL, NULL, (LPBYTE)buf, &bufSize) == ERROR_SUCCESS) {
+            oi.machine_id = buf;
+        }
+        RegCloseKey(hKey);
+    }
+
+    // Serial number from WMI via registry (ComputerSystemProduct)
+    hKey = NULL;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\SystemInformation", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char buf[64] = {};
+        DWORD bufSize = sizeof(buf);
+        if (RegQueryValueExA(hKey, "SystemSerialNumber", NULL, NULL, (LPBYTE)buf, &bufSize) == ERROR_SUCCESS) {
+            oi.serial_number = buf;
+        }
+        RegCloseKey(hKey);
+    }
     return oi;
 }
 
 std::vector<ProcessInfo> collectProcesses() {
+    // Get system CPU time for per-process CPU calculation
+    static FILETIME prevSysIdle{}, prevSysKernel{}, prevSysUser{};
+    FILETIME sysIdle, sysKernel, sysUser;
+    ULONGLONG sysTotalDiff = 0;
+    if (GetSystemTimes(&sysIdle, &sysKernel, &sysUser)) {
+        ULONGLONG kernelDiff = FileTimeToULL(sysKernel) - FileTimeToULL(prevSysKernel);
+        ULONGLONG userDiff = FileTimeToULL(sysUser) - FileTimeToULL(prevSysUser);
+        sysTotalDiff = kernelDiff + userDiff;
+        prevSysIdle = sysIdle; prevSysKernel = sysKernel; prevSysUser = sysUser;
+    }
+
+    MEMORYSTATUSEX memInfo{}; memInfo.dwLength = sizeof(memInfo);
+    GlobalMemoryStatusEx(&memInfo);
+    ULONGLONG totalPhysMem = memInfo.ullTotalPhys;
+
     std::vector<ProcessInfo> list;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return list;
@@ -74,7 +110,37 @@ std::vector<ProcessInfo> collectProcesses() {
             pi.pid = (int32_t)pe.th32ProcessID;
             pi.name.assign(pe.szExeFile, pe.szExeFile + wcslen(pe.szExeFile));
             pi.status = "running";
-            pi.cpu = 0.0; pi.memory = 0.0; pi.command = "";
+
+            // Open process to query memory and CPU times
+            HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pe.th32ProcessID);
+            if (hProc) {
+                PROCESS_MEMORY_COUNTERS_EX pmc{};
+                if (GetProcessMemoryInfo(hProc, (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+                    pi.memory = (totalPhysMem > 0) ? (double)pmc.WorkingSetSize * 100.0 / (double)totalPhysMem : 0.0;
+                }
+
+                FILETIME ftCreate, ftExit, ftKernel, ftUser;
+                if (GetProcessTimes(hProc, &ftCreate, &ftExit, &ftKernel, &ftUser) && sysTotalDiff > 0) {
+                    static std::map<DWORD, ULONGLONG> prevProcTime;
+                    ULONGLONG procTime = FileTimeToULL(ftKernel) + FileTimeToULL(ftUser);
+                    auto it = prevProcTime.find(pe.th32ProcessID);
+                    if (it != prevProcTime.end()) {
+                        ULONGLONG procDiff = procTime - it->second;
+                        pi.cpu = (double)procDiff * 100.0 / (double)sysTotalDiff;
+                    }
+                    prevProcTime[pe.th32ProcessID] = procTime;
+                }
+
+                // Get command line from process
+                // Try QueryFullProcessImageName for the executable path
+                wchar_t exePath[MAX_PATH] = {};
+                DWORD exePathSize = MAX_PATH;
+                if (QueryFullProcessImageNameW(hProc, 0, exePath, &exePathSize)) {
+                    pi.command.assign(exePath, exePath + exePathSize);
+                }
+
+                CloseHandle(hProc);
+            }
             list.push_back(std::move(pi));
         } while (Process32NextW(snap, &pe));
     }
@@ -82,8 +148,55 @@ std::vector<ProcessInfo> collectProcesses() {
     return list;
 }
 
+static std::string readRegStr(HKEY root, const char* subkey, const char* value) {
+    HKEY hKey = NULL;
+    std::string result;
+    if (RegOpenKeyExA(root, subkey, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char buf[512] = {};
+        DWORD bufSize = sizeof(buf);
+        if (RegQueryValueExA(hKey, value, NULL, NULL, (LPBYTE)buf, &bufSize) == ERROR_SUCCESS) {
+            result = buf;
+        }
+        RegCloseKey(hKey);
+    }
+    return result;
+}
+
 std::vector<Application> collectApplications() {
-    return {};
+    std::vector<Application> apps;
+    HKEY hKey = NULL;
+    // Enumerate 64-bit and 32-bit uninstall keys
+    const char* keys[] = {
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
+    };
+    for (int k = 0; k < 2; k++) {
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, keys[k], 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+            continue;
+        DWORD subkeyIndex = 0;
+        char subkeyName[256] = {};
+        DWORD subkeyNameSize = sizeof(subkeyName);
+        while (RegEnumKeyExA(hKey, subkeyIndex, subkeyName, &subkeyNameSize, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
+            char fullSubkey[512];
+            snprintf(fullSubkey, sizeof(fullSubkey), "%s\\%s", keys[k], subkeyName);
+            std::string name = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "DisplayName");
+            if (name.empty()) {
+                subkeyNameSize = sizeof(subkeyName);
+                subkeyIndex++;
+                continue;
+            }
+            Application app{};
+            app.name = name;
+            app.version = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "DisplayVersion");
+            app.install_date = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "InstallDate");
+            app.publisher = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "Publisher");
+            apps.push_back(std::move(app));
+            subkeyNameSize = sizeof(subkeyName);
+            subkeyIndex++;
+        }
+        RegCloseKey(hKey);
+    }
+    return apps;
 }
 
 std::string buildStatsJson(const Config& cfg) {
