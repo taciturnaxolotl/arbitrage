@@ -1,0 +1,31 @@
+# CMake generated files and directories
+/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+
+# Build artifacts
+*.exe
+*.dll
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+
+# Visual Studio / IDE files
+*.user
+*.suo
+*.ncb
+*.VC.db
+*.VC.opendb
+*.sdf
+*.idb
+
+# macOS files
+.DS_Store
+
+# Logs
+*.log
