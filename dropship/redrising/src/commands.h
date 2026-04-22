@@ -12,6 +12,6 @@ struct CommandInfo {
 
 std::vector<CommandInfo> fetchPendingCommands(const Config& cfg);
 bool ackCommand(const Config& cfg, const std::string& command_id);
-bool sendCommandResult(const Config& cfg, const std::string& command_id, const std::string& result, const std::string& error);
+bool sendCommandResult(const Config& cfg, const std::string& command_id, const std::string& result, const std::string& error, bool resultIsRawJson = false);
 void processCommands(const Config& cfg);
 std::string escapeJson(const std::string& s);

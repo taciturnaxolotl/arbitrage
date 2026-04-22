@@ -39,16 +39,18 @@
 .terminal-output::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
 .terminal-prompt { color: #75DF0B; font-weight: 600; }
 .terminal-prompt .host { color: #1BC9E7; }
+.terminal-prompt .cwd { color: #e6edf3; }
 .terminal-input { display: flex; align-items: center; padding: 8px 16px; border-top: 1px solid #30363d; background: #16162a; border-radius: 0 0 8px 8px; }
 .terminal-input .prompt-label { color: #75DF0B; font-weight: 600; margin-right: 8px; white-space: nowrap; }
 .terminal-input input { flex: 1; border: none; background: transparent; color: #e6edf3; font-family: inherit; font-size: inherit; outline: none; }
 .terminal-status { color: #8b949e; font-size: 11px; padding: 4px 16px; background: #16162a; border-top: 1px solid #21262d; }
-.terminal-status .spinner { animation: spin 1s linear infinite; display: inline-block; }
 .t-green { color: #3fb950; }
 .t-red { color: #f85149; }
 .t-yellow { color: #d29922; }
 .t-cyan { color: #1BC9E7; }
 .t-dim { color: #8b949e; }
+@keyframes braille { 0% { content: '⠋'; } 14% { content: '⠙'; } 28% { content: '⠹'; } 42% { content: '⠸'; } 57% { content: '⠼'; } 71% { content: '⠴'; } 85% { content: '⠦'; } 100% { content: '⠧'; } }
+.braille::after { content: '⠋'; animation: braille 0.6s steps(1) infinite; }
 </style>
 </head>
 <body>
@@ -144,11 +146,11 @@
 
     <div class="tab-content" id="tab-terminal">
       <div class="terminal" id="term">
-        <div class="terminal-output" id="term-output"><span class="t-dim">Ready. Type a command and press Enter.</span>
+        <div class="terminal-output" id="term-output"><span class="t-dim">Ready. Type a command and press Enter to start a terminal session.</span>
 </div>
         <div class="terminal-input">
           <span class="prompt-label" id="term-prompt">$</span>
-          <input id="term-input" placeholder="Enter command..." autocomplete="off" spellcheck="false" />
+          <input id="term-input" placeholder="Enter command... (auto-starts terminal session)" autocomplete="off" spellcheck="false" />
         </div>
         <div class="terminal-status" id="term-status"></div>
       </div>
@@ -291,6 +293,8 @@ function switchTab(name) {
   event.target.classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'commands') loadCommands();
+  if (name === 'terminal' && !terminalSessionActive) termStartSession();
+  if (name !== 'terminal' && terminalSessionActive) termEndSession();
 }
 
 let commandPollInterval = null;
@@ -457,6 +461,9 @@ function connectWS() { const proto = location.protocol === 'https:' ? 'wss' : 'w
 
 let terminalHistory = [];
 let terminalHistIdx = -1;
+let terminalWS = null;
+let terminalSessionActive = false;
+let termCwd = '';
 
 const termOutput = () => document.getElementById('term-output');
 const termInput = () => document.getElementById('term-input');
@@ -464,6 +471,12 @@ const termStatus = () => document.getElementById('term-status');
 
 function termWrite(html) { const el = termOutput(); el.innerHTML += html; el.scrollTop = el.scrollHeight; }
 function termWriteLine(text) { termWrite(esc(text) + '\n'); }
+
+function termUpdatePrompt() {
+  const host = document.getElementById('hostname')?.textContent || 'host';
+  const promptEl = document.getElementById('term-prompt');
+  if (promptEl) promptEl.textContent = host + ' $';
+}
 
 function termPromptHtml() {
   const host = document.getElementById('hostname')?.textContent || 'host';
@@ -476,7 +489,8 @@ function termClear() { const el = termOutput(); el.innerHTML = ''; }
 function termHandleResult(cmd) {
   if (cmd.error) {
     termWrite(`<span class="t-red">${esc(cmd.error)}</span>\n`);
-  } else if (cmd.result) {
+  }
+  if (cmd.result) {
     if (typeof cmd.result === 'object' && cmd.result.name && cmd.result.content) {
       const bytes = atob(cmd.result.content);
       const arr = new Uint8Array(bytes.length);
@@ -487,11 +501,83 @@ function termHandleResult(cmd) {
       a.href = url; a.download = cmd.result.name; a.click();
       URL.revokeObjectURL(url);
       termWrite(`<span class="t-green">Downloaded:</span> ${esc(cmd.result.name)} (${formatBytes(parseInt(cmd.result.size) || arr.length)})\n`);
+    } else if (typeof cmd.result === 'object' && cmd.result.output !== undefined) {
+      const text = cmd.result.output || '';
+      if (text) termWrite(esc(text) + '\n');
+      if (cmd.result.cwd) {
+        termCwd = cmd.result.cwd;
+        termUpdatePrompt();
+      }
     } else {
       const text = typeof cmd.result === 'string' ? cmd.result : JSON.stringify(cmd.result, null, 2);
       termWrite(esc(text) + '\n');
     }
   }
+}
+
+function termConnectWS() {
+  if (terminalWS) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {
+    terminalWS = ws;
+    terminalSessionActive = true;
+    termSetStatus('Session active');
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'command_completed' && msg.data) {
+      const data = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
+      termInput().disabled = false;
+      termSetStatus(terminalSessionActive ? 'Session active' : '');
+      termInput().focus();
+      termHandleResult(data);
+      loadCommands();
+    } else if (msg.type === 'command_acknowledged' && msg.data) {
+      termSetStatus('<span class="braille"></span> Running...');
+    }
+  };
+  ws.onclose = () => {
+    terminalWS = null;
+    if (terminalSessionActive) {
+      termSetStatus('<span class="t-yellow">Session disconnected</span>');
+      terminalSessionActive = false;
+    }
+  };
+  ws.onerror = () => { ws.close(); };
+}
+
+function termDisconnectWS() {
+  terminalSessionActive = false;
+  if (terminalWS) { terminalWS.close(); terminalWS = null; }
+  termSetStatus('');
+}
+
+async function termStartSession() {
+  termSetStatus('<span class="braille"></span> Starting terminal session...');
+  try {
+    const resp = await fetch(`/api/clients/${clientId}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'terminal_start', payload: {}, timeout: 30 })
+    });
+    if (!resp.ok) { termSetStatus(`<span class="t-red">Failed to start session (${resp.status})</span>`); return; }
+    termConnectWS();
+  } catch(e) {
+    termSetStatus(`<span class="t-red">Error: ${esc(e.message)}</span>`);
+  }
+}
+
+async function termEndSession() {
+  termCwd = '';
+  try {
+    await fetch(`/api/clients/${clientId}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'terminal_end', payload: {}, timeout: 10 })
+    });
+  } catch(e) {}
+  termDisconnectWS();
 }
 
 async function termExecute(cmd) {
@@ -520,34 +606,60 @@ async function termExecute(cmd) {
   }
 
   termWrite(termPromptHtml() + esc(cmd) + '\n');
-  termSetStatus('<span class="spinner">⟳</span> Executing...');
   termInput().disabled = true;
 
-  try {
-    const resp = await fetch(`/api/clients/${clientId}/exec`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, payload, timeout: 30 })
-    });
-    const cmd = await resp.json();
-    termSetStatus('');
-    termInput().disabled = false;
-    termInput().focus();
-
-    if (resp.status === 504) {
-      termWrite(`<span class="t-yellow">Command timed out</span> (status: ${cmd.status})\n`);
-      termWrite(`<span class="t-dim">The client may be offline or slow to respond. Check Command History for updates.</span>\n`);
-    } else if (!resp.ok) {
-      termWrite(`<span class="t-red">Error: ${esc(cmd.error || resp.statusText)}</span>\n`);
-    } else {
-      termHandleResult(cmd);
-      loadCommands();
+  if (terminalSessionActive && terminalWS && terminalWS.readyState === WebSocket.OPEN) {
+    // Fast path: send via HTTP, result arrives via WS
+    termSetStatus('<span class="braille"></span>');
+    try {
+      const resp = await fetch(`/api/clients/${clientId}/commands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, payload, timeout: 60 })
+      });
+      if (!resp.ok) {
+        termWrite(`<span class="t-red">Error: ${resp.status}</span>\n`);
+        termInput().disabled = false;
+        termInput().focus();
+        termSetStatus('Session active');
+      }
+      // Result comes via WS
+    } catch(e) {
+      termWrite(`<span class="t-red">Error: ${esc(e.message)}</span>\n`);
+      termInput().disabled = false;
+      termInput().focus();
+      termSetStatus('Session active');
     }
-  } catch(e) {
-    termWrite(`<span class="t-red">Error: ${esc(e.message)}</span>\n`);
-    termSetStatus('');
-    termInput().disabled = false;
-    termInput().focus();
+  } else {
+    // Slow path: synchronous long-poll
+    termSetStatus('<span class="braille"></span> No live session...');
+    try {
+      const resp = await fetch(`/api/clients/${clientId}/exec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, payload, timeout: 30 })
+      });
+      const cmd = await resp.json();
+      termInput().disabled = false;
+      termInput().focus();
+      termSetStatus(terminalSessionActive ? 'Session active' : '');
+
+      if (resp.status === 504) {
+        termWrite(`<span class="t-yellow">Command timed out</span> (status: ${cmd.status})\n`);
+        termWrite(`<span class="t-dim">The client may be offline. Results may appear in Command History.</span>\n`);
+      } else if (!resp.ok) {
+        termWrite(`<span class="t-red">Error: ${esc(cmd.error || resp.statusText)}</span>\n`);
+      } else {
+        termHandleResult(cmd);
+        loadCommands();
+      }
+    } catch(e) {
+      termWrite(`<span class="t-red">Error: ${esc(e.message)}</span>\n`);
+      termInput().disabled = false;
+      termInput().focus();
+      termSetStatus('');
+      termSetStatus('');
+    }
   }
 }
 
@@ -558,7 +670,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') {
       const cmd = input.value;
       input.value = '';
-      termExecute(cmd);
+      if (!terminalSessionActive) {
+        termStartSession().then(() => termExecute(cmd));
+      } else {
+        termExecute(cmd);
+      }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (terminalHistIdx > 0) { terminalHistIdx--; input.value = terminalHistory[terminalHistIdx]; }

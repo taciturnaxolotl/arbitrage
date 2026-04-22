@@ -1,4 +1,4 @@
-add_executable(RedRising main.cpp client.cpp stats.cpp)
+add_executable(RedRising main.cpp client.cpp stats.cpp terminal.cpp)
 
 add_library(commands_lib STATIC commands.cpp)
 target_include_directories(commands_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

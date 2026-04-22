@@ -8,14 +8,17 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adrg/xdg"
+	"github.com/gorilla/websocket"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
@@ -136,8 +139,13 @@ type CommandResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-var lastDataHash string
-var statePath string
+var (
+	lastDataHash string
+	statePath    string
+	termWS       *websocket.Conn
+	termWSMu     sync.Mutex
+	termCwd      string
+)
 
 type SavedState struct {
 	ClientID  string `json:"client_id"`
@@ -370,7 +378,7 @@ func executeAndReport(cfg *Config, cmd Command) {
 		return
 	}
 
-	result := executeCommand(cmd)
+	result := executeCommand(cfg, cmd, "", false)
 
 	if _, err := postAuth(cfg, "/api/commands/result", result, nil); err != nil {
 		log.Printf("result report error: %v", err)
@@ -378,7 +386,7 @@ func executeAndReport(cfg *Config, cmd Command) {
 	log.Printf("Command %s completed", cmd.ID)
 }
 
-func executeCommand(cmd Command) CommandResult {
+func executeCommand(cfg *Config, cmd Command, cwd string, trackCwd bool) CommandResult {
 	result := CommandResult{CommandID: cmd.ID}
 
 	switch cmd.Type {
@@ -388,11 +396,47 @@ func executeCommand(cmd Command) CommandResult {
 			result.Error = "missing command payload"
 			return result
 		}
-		out, err := exec.Command("sh", "-c", cmdStr).CombinedOutput()
-		if err != nil {
-			result.Error = err.Error()
+		if trackCwd {
+			// Terminal session: wrap with cwd tracking
+			wrappedCmd := cmdStr
+			if cwd != "" {
+				wrappedCmd = fmt.Sprintf("cd %s && %s", shellescape(cwd), cmdStr)
+			}
+			wrappedCmd = wrappedCmd + `; echo ""; echo "__CWD__:$(pwd)"`
+			out, err := exec.Command("sh", "-c", wrappedCmd).CombinedOutput()
+			output := string(out)
+			marker := "__CWD__:"
+			var newCwd string
+			if idx := strings.LastIndex(output, marker); idx != -1 {
+				newCwd = strings.TrimSpace(output[idx+len(marker):])
+				output = output[:idx]
+				output = strings.TrimRight(output, "\n")
+			} else {
+				newCwd = cwd
+			}
+			result.Result = map[string]string{
+				"output": output,
+				"cwd":    newCwd,
+			}
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					result.Error = fmt.Sprintf("exit code %d", exitErr.ExitCode())
+				} else {
+					result.Error = err.Error()
+				}
+			}
+		} else {
+			// Heartbeat path: no cwd tracking
+			out, err := exec.Command("sh", "-c", cmdStr).CombinedOutput()
+			result.Result = string(out)
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					result.Error = fmt.Sprintf("exit code %d", exitErr.ExitCode())
+				} else {
+					result.Error = err.Error()
+				}
+			}
 		}
-		result.Result = string(out)
 
 	case "list_apps":
 		apps, err := collectApplications()
@@ -440,11 +484,144 @@ func executeCommand(cmd Command) CommandResult {
 			"size":    fmt.Sprintf("%d", len(data)),
 		}
 
+	case "terminal_start":
+		go startTerminalWS(cfg)
+		result.Result = "terminal ws connecting"
+
+	case "terminal_end":
+		stopTerminalWS()
+		result.Result = "terminal ws disconnected"
+
 	default:
 		result.Error = fmt.Sprintf("unknown command type: %s", cmd.Type)
 	}
 
 	return result
+}
+
+func startTerminalWS(cfg *Config) {
+	stopTerminalWS()
+	termCwd = ""
+
+	u, err := url.Parse(cfg.ServerURL)
+	if err != nil {
+		log.Printf("terminal ws: bad server url: %v", err)
+		return
+	}
+
+	wsScheme := "ws"
+	if u.Scheme == "https" {
+		wsScheme = "wss"
+	}
+	wsURL := fmt.Sprintf("%s://%s/api/ws", wsScheme, u.Host)
+
+	header := http.Header{}
+	header.Set("Authorization", "Basic "+base64Encode(cfg.ClientID+":"+cfg.Token))
+
+	log.Printf("terminal ws: connecting to %s", wsURL)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		log.Printf("terminal ws: dial error: %v", err)
+		return
+	}
+
+	termWSMu.Lock()
+	termWS = conn
+	termWSMu.Unlock()
+
+	log.Printf("terminal ws: connected")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]json.RawMessage
+			if err := json.Unmarshal(message, &msg); err != nil {
+				continue
+			}
+
+			msgType := string(msg["type"])
+			data, hasData := msg["data"]
+
+			var cmd Command
+			if hasData {
+				json.Unmarshal(data, &cmd)
+			}
+
+			switch {
+			case strings.Contains(msgType, "command"):
+				if cmd.ID == "" {
+					continue
+				}
+				// Ack via WS
+				ackData, _ := json.Marshal(map[string]string{"command_id": cmd.ID})
+				termWSMu.Lock()
+				if termWS != nil {
+					termWS.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"command_ack","data":%s}`, ackData)))
+				}
+				termWSMu.Unlock()
+
+				// Execute with cwd tracking
+				result := executeCommand(cfg, cmd, termCwd, true)
+
+				// Update cwd from result
+				if cmd.Type == "exec" {
+					if resultMap, ok := result.Result.(map[string]string); ok {
+						if newCwd, ok := resultMap["cwd"]; ok && newCwd != "" {
+							termCwd = newCwd
+						}
+					}
+				}
+
+				// Report via WS
+				resData, _ := json.Marshal(result)
+				termWSMu.Lock()
+				if termWS != nil {
+					termWS.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"command_result","data":%s}`, resData)))
+				}
+				termWSMu.Unlock()
+			}
+		}
+	}()
+
+	// Wait for disconnect
+	<-done
+	log.Printf("terminal ws: disconnected")
+}
+
+func stopTerminalWS() {
+	termWSMu.Lock()
+	defer termWSMu.Unlock()
+	if termWS != nil {
+		termWS.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		termWS.Close()
+		termWS = nil
+	}
+}
+
+func base64Encode(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+func shellescape(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '/' || r == '@' || r == '+') {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func computeDataHash(stats *SystemStats, osInfo *OSInfo) string {

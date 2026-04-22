@@ -134,6 +134,12 @@ func (a *API) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If client is WS-connected, skip returning pending commands — they're delivered via WS
+	if a.hub.IsClientConnected(clientID) {
+		resp.Commands = nil
+		resp.FullSync = false
+	}
+
 	a.hub.Broadcast("client_heartbeat", map[string]string{"id": clientID, "status": "online"})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -415,6 +421,9 @@ func (a *API) SendCommand(w http.ResponseWriter, r *http.Request) {
 	cmd := a.store.CreateCommand(clientID, req)
 	a.hub.Broadcast("command_created", cmd)
 
+	// If client is WS-connected, push command immediately
+	a.hub.SendToClient(clientID, "command", cmd)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cmd)
 }
@@ -459,6 +468,7 @@ func (a *API) ExecSync(w http.ResponseWriter, r *http.Request) {
 
 	cmd := a.store.CreateCommand(clientID, req)
 	a.hub.Broadcast("command_created", cmd)
+	a.hub.SendToClient(clientID, "command", cmd)
 
 	waitTimeout := time.Duration(req.Timeout+15) * time.Second
 	result, found := a.store.WaitForCommand(cmd.ID, waitTimeout)

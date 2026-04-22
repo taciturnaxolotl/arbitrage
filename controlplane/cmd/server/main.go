@@ -49,7 +49,7 @@ func main() {
 
 	dbPath := os.Getenv("DB_PATH")
 	s := store.New(dbPath)
-	h := ws.NewHub()
+	h := ws.NewHub(s)
 	api := handlers.NewAPI(s, h)
 
 	r := chi.NewRouter()
@@ -86,6 +86,20 @@ func main() {
 	}
 	r.Handle("/*", auth.RequireAuth(http.FileServer(http.FS(staticContent))))
 	r.Get("/ws", auth.RequireAuth(http.HandlerFunc(h.HandleWebSocket)).ServeHTTP)
+	r.Get("/api/ws", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Client WS requires Basic Auth
+		id, token, ok := r.BasicAuth()
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Basic realm="controlplane"`)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		if !s.AuthenticateClient(id, token) {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		h.HandleClientWebSocket(w, r, id)
+	}))
 
 	go s.StaleChecker()
 
