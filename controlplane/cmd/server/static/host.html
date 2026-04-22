@@ -253,15 +253,12 @@ const HEARTBEAT_INTERVAL = 15000;
 
 function updateNextHeartbeat() {
   if (nextHeartbeatTimer) { clearInterval(nextHeartbeatTimer); nextHeartbeatTimer = null; }
-  if (!lastHeartbeatTime) { document.getElementById('next-heartbeat').textContent = '—'; return; }
   function tick() {
-    const next = lastHeartbeatTime + HEARTBEAT_INTERVAL;
-    const diff = next - Date.now();
-    if (diff <= 0) {
-      document.getElementById('next-heartbeat').textContent = 'now';
-    } else {
-      document.getElementById('next-heartbeat').textContent = '~' + Math.ceil(diff / 1000) + 's';
-    }
+    const el = document.getElementById('next-heartbeat');
+    if (!el) return;
+    if (!lastHeartbeatTime) { el.textContent = '—'; return; }
+    const diff = lastHeartbeatTime + HEARTBEAT_INTERVAL - Date.now();
+    el.textContent = diff <= 0 ? 'now' : '~' + Math.ceil(diff / 1000) + 's';
   }
   tick();
   nextHeartbeatTimer = setInterval(tick, 1000);
