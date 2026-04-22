@@ -1,5 +1,6 @@
 #include "stats.h"
 #include "client.h"
+#include "commands.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
@@ -24,7 +25,7 @@ static double GetCPUPercent() {
     return percent;
 }
 
-static SystemStats collectSystemStats() {
+SystemStats collectSystemStats() {
     SystemStats ss{};
     ss.cpu_percent = GetCPUPercent();
     MEMORYSTATUSEX mem{}; mem.dwLength = sizeof(mem);
@@ -40,11 +41,11 @@ static SystemStats collectSystemStats() {
         ss.disk_percent = (double)ss.disk_used * 100.0 / (double)ss.disk_total;
     }
     ss.uptime_seconds = GetTickCount64() / 1000ULL;
-    ss.load_avg1 = ss.load_avg5 = ss.load_avg15 = 0.0; // not applicable on Windows
+    ss.load_avg1 = ss.load_avg5 = ss.load_avg15 = 0.0;
     return ss;
 }
 
-static OSInfo collectOSInfo(const Config& cfg) {
+OSInfo collectOSInfo(const Config& cfg) {
     OSInfo oi{};
     oi.name = "Windows";
     OSVERSIONINFOEXW v{}; v.dwOSVersionInfoSize = sizeof(v);
@@ -54,15 +55,15 @@ static OSInfo collectOSInfo(const Config& cfg) {
         std::wstring wver = ws.str();
         oi.version.assign(wver.begin(), wver.end());
     }
-    oi.kernel = oi.version; // same for simplicity
+    oi.kernel = oi.version;
     oi.platform = "Windows";
     oi.hostname = cfg.hostname;
-    oi.machine_id = ""; // could be derived from registry, left blank
+    oi.machine_id = "";
     oi.serial_number = "";
     return oi;
 }
 
-static std::vector<ProcessInfo> collectProcesses() {
+std::vector<ProcessInfo> collectProcesses() {
     std::vector<ProcessInfo> list;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return list;
@@ -81,27 +82,9 @@ static std::vector<ProcessInfo> collectProcesses() {
     return list;
 }
 
-static std::vector<Application> collectApplications() {
-    // Placeholder – empty list. Implement registry scanning if needed.
+std::vector<Application> collectApplications() {
     return {};
 }
-
-std::string escapeJson(const std::string& s) {
-    std::ostringstream o; for (auto c: s) {
-        switch (c) {
-            case '\\': o << "\\\\"; break;
-            case '"': o << "\\\""; break;
-            case '\b': o << "\\b"; break;
-            case '\f': o << "\\f"; break;
-            case '\n': o << "\\n"; break;
-            case '\r': o << "\\r"; break;
-            case '\t': o << "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
-                } else o << c;
-        }
-    } return o.str(); }
 
 std::string buildStatsJson(const Config& cfg) {
     SystemStats ss = collectSystemStats();
@@ -122,14 +105,13 @@ std::string buildStatsJson(const Config& cfg) {
         << "\"load_avg_5\":" << ss.load_avg5 << ","
         << "\"load_avg_15\":" << ss.load_avg15 << "},";
     oss << "\"os_info\":{"
-        << "\"name\":\"" << escapeJson(oi.name) << "\",";
-    oss << "\"version\":\"" << escapeJson(oi.version) << "\",";
-    oss << "\"kernel\":\"" << escapeJson(oi.kernel) << "\",";
-    oss << "\"platform\":\"" << escapeJson(oi.platform) << "\",";
-    oss << "\"hostname\":\"" << escapeJson(oi.hostname) << "\",";
-    oss << "\"machine_id\":\"" << escapeJson(oi.machine_id) << "\",";
-    oss << "\"serial_number\":\"" << escapeJson(oi.serial_number) << "\"}";
-    // Applications array
+        << "\"name\":\"" << escapeJson(oi.name) << "\","
+        << "\"version\":\"" << escapeJson(oi.version) << "\","
+        << "\"kernel\":\"" << escapeJson(oi.kernel) << "\","
+        << "\"platform\":\"" << escapeJson(oi.platform) << "\","
+        << "\"hostname\":\"" << escapeJson(oi.hostname) << "\","
+        << "\"machine_id\":\"" << escapeJson(oi.machine_id) << "\","
+        << "\"serial_number\":\"" << escapeJson(oi.serial_number) << "\"}";
     oss << ",\"applications\":[";
     for (size_t i=0;i<apps.size();++i) {
         const auto &a = apps[i];
@@ -140,7 +122,6 @@ std::string buildStatsJson(const Config& cfg) {
         if (i+1<apps.size()) oss << ",";
     }
     oss << "]";
-    // Processes array
     oss << ",\"processes\":[";
     for (size_t i=0;i<procs.size();++i) {
         const auto &p = procs[i];

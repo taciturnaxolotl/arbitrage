@@ -9,5 +9,8 @@ struct Config {
     std::string hostname;
 };
 
-bool registerClient(const Config& cfg);
+bool registerClient(Config& cfg);
 bool sendHeartbeat(const Config& cfg);
+bool sendFullSync(const Config& cfg);
+bool httpPost(const Config& cfg, const std::string& endpoint, const std::string& body, std::string& response);
+bool httpGet(const Config& cfg, const std::string& endpoint, std::string& response);

