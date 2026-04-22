@@ -1,3 +1,128 @@
-RedRising Client Software
+END USER LICENSE AGREEMENT FOR REDRISING CLIENT SOFTWARE
 
-This software is provided as-is without any warranty.
+*Version 1.0 - Effective Upon Installation*
+
+IMPORTANT - PLEASE READ THIS AGREEMENT CAREFULLY BEFORE INSTALLING OR USING THE SOFTWARE. BY CLICKING "I AGREE," INSTALLING, COPYING, OR OTHERWISE ACCESSING THE SOFTWARE, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE BOUND BY THE TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT INSTALL OR USE THE SOFTWARE.
+
+---
+
+**1. DEFINITIONS**
+
+For purposes of this Agreement, the following terms shall have the meanings set forth below:
+
+"Software" means the RedRising client application, including all associated binaries, libraries, configuration files, documentation, and updates thereto.
+
+"Authors" means the individuals or entities that developed, maintain, and distribute the Software.
+
+"You" or "Licensee" means the individual or legal entity installing or using the Software, and any organization on whose behalf such installation or use occurs.
+
+"Authorized Device" means any computing device that You own, lease, or are otherwise legally permitted to administer.
+
+"Control Plane" means the Authors' backend infrastructure to which the Software transmits telemetry and operational data.
+
+---
+
+**2. GRANT OF LICENSE**
+
+Subject to the terms and conditions of this Agreement, the Authors hereby grant You a limited, non-exclusive, non-transferable, revocable license to install and use the Software solely on Authorized Devices for internal operations purposes. This license does not extend to any device not under Your lawful administrative control. The Authors reserve all rights not expressly granted herein.
+
+---
+
+**3. PERMITTED USES**
+
+Licensee is authorized to use the Software for the following purposes:
+
+a) Monitoring system health metrics, collecting operational statistics, and transmitting periodic heartbeat signals to the Control Plane;
+
+b) Receiving and processing remote administrative commands, provided that Licensee has obtained all necessary authorizations from the relevant system owners and applicable organizational policies;
+
+c) Enabling shadow-copy tiering engine services and related storage management functions as documented;
+
+d) Any other use consistent with the Software's intended purpose as an agent.
+
+---
+
+**4. RESTRICTIONS**
+
+Licensee shall not, and shall not permit any third party to:
+
+a) Reverse engineer, decompile, disassemble, or otherwise attempt to derive the source code of the Software, except to the limited extent expressly permitted by applicable law notwithstanding this restriction;
+
+b) Sell, sublicense, rent, lease, transfer, assign, or otherwise dispose of the Software or any rights therein;
+
+c) Modify, adapt, translate, or create derivative works based upon the Software without prior written consent of the Authors;
+
+d) Use the Software on any device or network for which Licensee lacks lawful administrative authority;
+
+e) Remove, obscure, or alter any proprietary notices, labels, or marks on the Software;
+
+f) Use the Software in any manner that violates applicable local, state, national, or international law or regulation. The Authors note, for the avoidance of doubt, that this includes jurisdictions where the Software's operation may conflict with export control regulations, data residency requirements, or other compliance frameworks - the existence of which the Licensee is assumed to be aware, regardless of whether they actually are.
+
+---
+
+**5. INSTALLATION AND SYSTEM REQUIREMENTS**
+
+The Software is designed to operate as a background service with elevated system privileges necessary for monitoring functions. By installing the Software, You consent to its operation as a persistent system service, including its collection and transmission of system telemetry to the Control Plane as described in Section 3(a). Licensee is solely responsible for ensuring that such data collection is consistent with all applicable privacy policies, data protection obligations, and the informed expectations of any individuals whose systems may be monitored.
+
+---
+
+**6. DATA AND TELEMETRY**
+
+The Software may collect and transmit operational data including, without limitation, system metrics, process information, network statistics, and hardware identifiers. The Authors will handle such data in accordance with their Privacy Policy, incorporated herein by reference. Licensee represents and warrants that it has obtained any and all consents or authorizations required by applicable law prior to deploying the Software in any environment where such data may be collected from or about third parties. The Authors accept no responsibility for Licensee's failure to do so, including in circumstances where Licensee was confident it had everything sorted and it turned out they did not.
+
+---
+
+**7. DISCLAIMER OF WARRANTIES**
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTY OF ANY KIND. THE AUTHORS EXPRESSLY DISCLAIM ALL WARRANTIES, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. THE AUTHORS DO NOT WARRANT THAT THE SOFTWARE WILL OPERATE UNINTERRUPTED OR ERROR-FREE, THAT DEFECTS WILL BE CORRECTED, OR THAT THE SOFTWARE IS FREE OF COMPONENTS THAT MAY CAUSE UNINTENDED BEHAVIOR. LICENSEE ASSUMES ALL RISK ASSOCIATED WITH THE QUALITY AND PERFORMANCE OF THE SOFTWARE.
+
+---
+
+**8. LIMITATION OF LIABILITY**
+
+TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, PUNITIVE, OR EXEMPLARY DAMAGES WHATSOEVER, INCLUDING WITHOUT LIMITATION DAMAGES FOR LOSS OF PROFITS, LOSS OF DATA, BUSINESS INTERRUPTION, LOSS OF GOODWILL, OR PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES, ARISING OUT OF OR IN CONNECTION WITH THIS AGREEMENT OR THE USE OR INABILITY TO USE THE SOFTWARE, HOWEVER CAUSED AND UNDER ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, TORT, STRICT LIABILITY, OR OTHERWISE, EVEN IF THE AUTHORS HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+IN JURISDICTIONS THAT DO NOT ALLOW THE EXCLUSION OR LIMITATION OF CERTAIN DAMAGES, THE AUTHORS' LIABILITY SHALL BE LIMITED TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW - WHICH, IN MANY CASES, THE AUTHORS HAVE BEEN RELIABLY INFORMED, IS QUITE LIMITED INDEED.
+
+---
+
+**9. INDEMNIFICATION**
+
+Licensee agrees to defend, indemnify, and hold harmless the Authors and their respective officers, directors, employees, contractors, agents, successors, and assigns from and against any and all claims, demands, liabilities, damages, losses, costs, and expenses (including reasonable attorneys' fees) arising out of or relating to: (a) Licensee's use or misuse of the Software; (b) Licensee's breach of any representation, warranty, or obligation under this Agreement; (c) Licensee's violation of any applicable law or regulation; or (d) any claim by a third party arising from Licensee's deployment of the Software on systems or networks for which it lacked proper authorization. This indemnification obligation shall survive termination of this Agreement.
+
+---
+
+**10. TERM AND TERMINATION**
+
+This Agreement is effective as of the date of installation and shall remain in effect until terminated. The Authors may terminate this Agreement immediately upon written notice if Licensee breaches any material term hereof. Upon termination, Licensee shall cease all use of the Software and destroy or remove all copies in its possession or control. Sections 7, 8, 9, and 10 shall survive any termination of this Agreement and continue to bind the parties, whether or not the parties recall agreeing to that.
+
+---
+
+**11. GOVERNING LAW AND DISPUTE RESOLUTION**
+
+This Agreement shall be governed by and construed in accordance with the laws of the jurisdiction in which the Authors are principally located, without regard to its conflict of laws provisions. Any dispute arising out of or relating to this Agreement that cannot be resolved through good-faith negotiation shall be submitted to binding arbitration in accordance with the rules of a mutually agreed arbitration body. Each party shall bear its own costs and fees in connection with any such proceeding, except as the arbitrator may direct otherwise. The arbitrator's decision shall be final, binding, and enforceable in any court of competent jurisdiction.
+
+---
+
+**12. SEVERABILITY**
+
+If any provision of this Agreement is held to be invalid, illegal, or unenforceable by a court of competent jurisdiction, such provision shall be modified to the minimum extent necessary to make it enforceable, or if modification is not possible, shall be severed from this Agreement. The remaining provisions shall continue in full force and effect.
+
+---
+
+**13. ENTIRE AGREEMENT**
+
+This Agreement, together with any documentation incorporated by reference, constitutes the entire agreement between the parties with respect to the subject matter hereof and supersedes all prior and contemporaneous agreements, representations, warranties, and understandings, whether written or oral. No modification of this Agreement shall be binding unless made in writing and signed by authorized representatives of both parties. The Authors specifically note that informal communications, verbal assurances, and interpretive dance do not constitute valid amendments.
+
+---
+
+**14. ACKNOWLEDGMENT**
+
+BY INSTALLING OR USING THE SOFTWARE, LICENSEE ACKNOWLEDGES THAT IT HAS READ THIS AGREEMENT, UNDERSTANDS IT, AND AGREES TO BE BOUND BY ITS TERMS AND CONDITIONS. LICENSEE FURTHER ACKNOWLEDGES THAT THIS AGREEMENT IS THE COMPLETE AND EXCLUSIVE STATEMENT OF THE AGREEMENT BETWEEN THE PARTIES AND SUPERSEDES ANY PROPOSAL OR PRIOR AGREEMENT, ORAL OR WRITTEN, AND ANY OTHER COMMUNICATIONS BETWEEN THE PARTIES RELATING TO THE SUBJECT MATTER OF THIS AGREEMENT.
+
+*IF YOU DO NOT AGREE TO THESE TERMS AND CONDITIONS, DO NOT INSTALL OR USE THE SOFTWARE.*
+
+---
+
+RedRising Client Software - End User License Agreement
+Copywrite Authors. All Rights Reserved.

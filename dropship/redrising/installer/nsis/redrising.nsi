@@ -11,7 +11,7 @@ RequestExecutionLevel admin
 !define MUI_LICENSEPAGE_CHECKBOX_EXPLANATION "If you check this box the installer will register the client as a System service. You may leave it unchecked to install without that extra step."
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "$%CD%\installer\nsis\License.txt" ; optional, can be omitted
+!insertmacro MUI_PAGE_LICENSE "License.txt" ; optional, can be omitted
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
