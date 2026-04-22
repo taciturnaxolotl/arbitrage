@@ -45,19 +45,34 @@ type OSInfo struct {
 }
 
 type Application struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	InstallDate string `json:"install_date,omitempty"`
-	Publisher   string `json:"publisher,omitempty"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	InstallDate  string   `json:"install_date,omitempty"`
+	Publisher    string   `json:"publisher,omitempty"`
+	Path         string   `json:"path,omitempty"`
+	ArchKind     string   `json:"arch_kind,omitempty"`
+	LastModified string   `json:"last_modified,omitempty"`
+	SignedBy     []string `json:"signed_by,omitempty"`
 }
 
 type Process struct {
-	PID     int32   `json:"pid"`
-	Name    string  `json:"name"`
-	Status  string  `json:"status"`
-	CPU     float64 `json:"cpu_percent"`
-	Memory  float64 `json:"memory_percent"`
-	Command string  `json:"command,omitempty"`
+	PID         int32   `json:"pid"`
+	Name        string  `json:"name"`
+	Status      string  `json:"status"`
+	CPU         float64 `json:"cpu_percent"`
+	Memory      float64 `json:"memory_percent"`
+	Command     string  `json:"command,omitempty"`
+	Exe         string  `json:"exe,omitempty"`
+	Cwd         string  `json:"cwd,omitempty"`
+	Username    string  `json:"username,omitempty"`
+	Ppid        int32   `json:"ppid"`
+	CreateTime  int64   `json:"create_time,omitempty"`
+	NumThreads  int32   `json:"num_threads"`
+	NumFDs      int32   `json:"num_fds"`
+	RSS         uint64  `json:"rss,omitempty"`
+	VMS         uint64  `json:"vms,omitempty"`
+	ReadBytes   uint64  `json:"read_bytes,omitempty"`
+	WriteBytes  uint64  `json:"write_bytes,omitempty"`
 }
 
 type Command struct {

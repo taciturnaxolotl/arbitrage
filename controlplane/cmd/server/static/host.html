@@ -126,6 +126,22 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="process-modal">
+  <div class="modal" style="width:860px;">
+    <button class="close" onclick="closeProcessDetail()">&times;</button>
+    <h2 id="process-modal-title">Process Detail</h2>
+    <div id="process-modal-body"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="app-modal">
+  <div class="modal" style="width:860px;">
+    <button class="close" onclick="closeAppDetail()">&times;</button>
+    <h2 id="app-modal-title">Application Detail</h2>
+    <div id="app-modal-body"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="command-modal">
   <div class="modal" style="width:500px;">
     <button class="close" onclick="closeCommandModal()">&times;</button>
@@ -162,6 +178,8 @@ customElements.define('relative-time',RelativeTimeElement);
 const clientId = new URLSearchParams(location.search).get('id');
 if (!clientId) { location.href = '/'; }
 let cpuChart, memChart, diskChart;
+let processCache = [];
+let appCache = [];
 let commandHistory = [];
 
 function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
@@ -224,15 +242,17 @@ function renderStats(s, c) {
 }
 
 function renderProcesses(procs) {
+  processCache = procs || [];
   const tbody = document.getElementById('processes-tbody');
   if (!procs || procs.length === 0) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#8b949e;padding:20px;">No process data available</td></tr>'; return; }
-  tbody.innerHTML = procs.map(p => `<tr><td>${p.pid}</td><td>${esc(p.name)}</td><td>${esc(p.status)}</td><td>${p.cpu_percent.toFixed(1)}</td><td>${p.memory_percent.toFixed(1)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.command)}">${esc(p.command)}</td></tr>`).join('');
+  tbody.innerHTML = procs.map((p, i) => `<tr class="clickable" onclick="showProcessDetail(${i})"><td>${p.pid}</td><td>${esc(p.name)}</td><td>${esc(p.status)}</td><td>${p.cpu_percent.toFixed(1)}</td><td>${p.memory_percent.toFixed(1)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.command)}">${esc(p.command)}</td></tr>`).join('');
 }
 
 function renderApps(apps) {
+  appCache = apps || [];
   const tbody = document.getElementById('apps-tbody');
   if (!apps || apps.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#8b949e;padding:20px;">No application data available</td></tr>'; return; }
-  tbody.innerHTML = apps.map(a => `<tr><td>${esc(a.name)}</td><td>${esc(a.version)}</td><td>${esc(a.publisher)}</td><td>${esc(a.install_date)}</td></tr>`).join('');
+  tbody.innerHTML = apps.map((a, i) => `<tr class="clickable" onclick="showAppDetail(${i})"><td>${esc(a.name)}</td><td>${esc(a.version)}</td><td>${esc(a.publisher)}</td><td>${esc(a.install_date)}</td></tr>`).join('');
 }
 
 function switchTab(name) {
@@ -319,6 +339,76 @@ async function loadCommands() {
   } catch(e) { console.error('commands load error:', e); }
 }
 
+function formatEpoch(ms) { if (!ms) return '—'; const d = new Date(ms); return d.toLocaleString(); }
+function formatDuration(ms) { if (!ms) return '—'; const s = Math.floor(ms/1000), m = Math.floor(s/60), h = Math.floor(m/60), d = Math.floor(h/24); if (d > 0) return `${d}d ${h%24}h ${m%60}m`; if (h > 0) return `${h}h ${m%60}m ${s%60}s`; if (m > 0) return `${m}m ${s%60}s`; return `${s}s`; }
+
+function showProcessDetail(idx) {
+  const p = processCache[idx]; if (!p) return;
+  const startedAgo = p.create_time ? formatDuration(Date.now() - p.create_time) : '—';
+  document.getElementById('process-modal-title').textContent = (p.name || 'Process') + ' [' + p.pid + ']';
+  document.getElementById('process-modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+      <div style="border-right:1px solid #30363d;padding-right:20px;">
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Identity</h3>
+        <div class="stat-row"><span class="label">PID</span><span class="value">${p.pid}</span></div>
+        <div class="stat-row"><span class="label">PPID</span><span class="value">${p.ppid || '—'}</span></div>
+        <div class="stat-row"><span class="label">Name</span><span class="value">${esc(p.name)}</span></div>
+        <div class="stat-row"><span class="label">Status</span><span class="value"><span class="badge ${p.status === 'running' ? 'online' : 'offline'}">${esc(p.status)}</span></span></div>
+        <div class="stat-row"><span class="label">Username</span><span class="value">${esc(p.username)}</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Timing</h3>
+        <div class="stat-row"><span class="label">Started</span><span class="value">${formatEpoch(p.create_time)}</span></div>
+        <div class="stat-row"><span class="label">Uptime</span><span class="value">${startedAgo}</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Paths</h3>
+        <div class="stat-row"><span class="label">Executable</span><span class="value" style="word-break:break-all;font-family:monospace;font-size:13px;">${esc(p.exe)}</span></div>
+        <div class="stat-row"><span class="label">Working Dir</span><span class="value" style="word-break:break-all;font-family:monospace;font-size:13px;">${esc(p.cwd)}</span></div>
+        <div class="stat-row"><span class="label">Command</span><span class="value" style="word-break:break-all;font-family:monospace;font-size:13px;">${esc(p.command)}</span></div>
+      </div>
+      <div style="padding-left:20px;">
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">CPU</h3>
+        <div class="stat-row"><span class="label">CPU %</span><span class="value" style="color:${gaugeColor(p.cpu_percent)}">${p.cpu_percent.toFixed(1)}%</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Memory</h3>
+        <div class="stat-row"><span class="label">Memory %</span><span class="value" style="color:${gaugeColor(p.memory_percent)}">${p.memory_percent.toFixed(1)}%</span></div>
+        <div class="stat-row"><span class="label">RSS</span><span class="value">${formatBytes(p.rss)}</span></div>
+        <div class="stat-row"><span class="label">VMS</span><span class="value">${formatBytes(p.vms)}</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Threads & File Descriptors</h3>
+        <div class="stat-row"><span class="label">Threads</span><span class="value">${p.num_threads || '—'}</span></div>
+        <div class="stat-row"><span class="label">Open FDs</span><span class="value">${p.num_fds || '—'}</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Disk I/O</h3>
+        <div class="stat-row"><span class="label">Read</span><span class="value">${formatBytes(p.read_bytes)}</span></div>
+        <div class="stat-row"><span class="label">Written</span><span class="value">${formatBytes(p.write_bytes)}</span></div>
+      </div>
+    </div>`;
+  document.getElementById('process-modal').style.display = 'flex';
+}
+function closeProcessDetail() { document.getElementById('process-modal').style.display = 'none'; }
+
+function showAppDetail(idx) {
+  const a = appCache[idx]; if (!a) return;
+  const signedBy = (a.signed_by && a.signed_by.length) ? a.signed_by.map(s => esc(s)).join(' → ') : '—';
+  document.getElementById('app-modal-title').textContent = a.name || 'Application';
+  document.getElementById('app-modal-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+      <div style="border-right:1px solid #30363d;padding-right:20px;">
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Identity</h3>
+        <div class="stat-row"><span class="label">Name</span><span class="value">${esc(a.name)}</span></div>
+        <div class="stat-row"><span class="label">Version</span><span class="value">${esc(a.version) || '—'}</span></div>
+        <div class="stat-row"><span class="label">Publisher</span><span class="value">${esc(a.publisher) || '—'}</span></div>
+        <div class="stat-row"><span class="label">Architecture</span><span class="value">${esc(a.arch_kind) || '—'}</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Code Signing</h3>
+        <div class="stat-row"><span class="label">Signed By</span><span class="value" style="word-break:break-all;font-family:monospace;font-size:13px;">${signedBy}</span></div>
+      </div>
+      <div style="padding-left:20px;">
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Installation</h3>
+        <div class="stat-row"><span class="label">Install Date</span><span class="value">${esc(a.install_date) || '—'}</span></div>
+        <div class="stat-row"><span class="label">Last Modified</span><span class="value">${esc(a.last_modified) || '—'}</span></div>
+        <h3 style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 12px;">Location</h3>
+        <div class="stat-row"><span class="label">Path</span><span class="value" style="word-break:break-all;font-family:monospace;font-size:13px;">${esc(a.path) || '—'}</span></div>
+      </div>
+    </div>`;
+  document.getElementById('app-modal').style.display = 'flex';
+}
+function closeAppDetail() { document.getElementById('app-modal').style.display = 'none'; }
+
 function showCommandDetail(cmdId) { const c = commandCache.find(x => x.id === cmdId); if (!c) return; const detail = document.getElementById('command-detail'); const result = document.getElementById('command-result'); let content = ''; if (c.error) content += `ERROR: ${c.error}\n\n`; if (c.result) { content += typeof c.result === 'string' ? c.result : JSON.stringify(c.result, null, 2); } result.textContent = content || '(no result)'; detail.style.display = 'block'; }
 function closeCommandDetail() { document.getElementById('command-detail').style.display = 'none'; }
 function startCommandPoll() { if (commandPollInterval) return; commandPollInterval = setInterval(loadCommands, 2000); }
@@ -334,6 +424,13 @@ async function sendCommand() {
 }
 
 function connectWS() { const proto = location.protocol === 'https:' ? 'wss' : 'ws'; const ws = new WebSocket(`${proto}://${location.host}/ws`); ws.onmessage = (e) => { const msg = JSON.parse(e.data); if (msg.type === 'command_acknowledged' || msg.type === 'command_completed' || msg.type === 'command_created' || msg.type === 'client_data_updated') { loadCommands(); loadClient(); } }; ws.onclose = () => setTimeout(connectWS, 3000); }
+
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach(o => o.style.display = 'none');
+});
 
 initGauges(); loadClient(); connectWS(); setInterval(loadClient, 15000);
 </script>

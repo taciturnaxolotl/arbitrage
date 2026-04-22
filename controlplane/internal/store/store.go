@@ -85,7 +85,11 @@ func (s *Store) migrate() {
 			name TEXT NOT NULL,
 			version TEXT NOT NULL DEFAULT '',
 			install_date TEXT NOT NULL DEFAULT '',
-			publisher TEXT NOT NULL DEFAULT ''
+			publisher TEXT NOT NULL DEFAULT '',
+			path TEXT NOT NULL DEFAULT '',
+			arch_kind TEXT NOT NULL DEFAULT '',
+			last_modified TEXT NOT NULL DEFAULT '',
+			signed_by TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_applications_client_id ON applications(client_id)`,
 		`CREATE TABLE IF NOT EXISTS processes (
@@ -96,7 +100,18 @@ func (s *Store) migrate() {
 			status TEXT NOT NULL DEFAULT '',
 			cpu_percent REAL NOT NULL DEFAULT 0,
 			memory_percent REAL NOT NULL DEFAULT 0,
-			command TEXT NOT NULL DEFAULT ''
+			command TEXT NOT NULL DEFAULT '',
+			exe TEXT NOT NULL DEFAULT '',
+			cwd TEXT NOT NULL DEFAULT '',
+			username TEXT NOT NULL DEFAULT '',
+			ppid INTEGER NOT NULL DEFAULT 0,
+			create_time INTEGER NOT NULL DEFAULT 0,
+			num_threads INTEGER NOT NULL DEFAULT 0,
+			num_fds INTEGER NOT NULL DEFAULT 0,
+			rss INTEGER NOT NULL DEFAULT 0,
+			vms INTEGER NOT NULL DEFAULT 0,
+			read_bytes INTEGER NOT NULL DEFAULT 0,
+			write_bytes INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_processes_client_id ON processes(client_id)`,
 		`CREATE TABLE IF NOT EXISTS commands (
@@ -125,6 +140,21 @@ func (s *Store) migrate() {
 		`ALTER TABLE commands ADD COLUMN error TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE commands ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300`,
 		`ALTER TABLE commands ADD COLUMN acknowledged_at DATETIME`,
+		`ALTER TABLE applications ADD COLUMN path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN arch_kind TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN last_modified TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE applications ADD COLUMN signed_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE processes ADD COLUMN exe TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE processes ADD COLUMN cwd TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE processes ADD COLUMN username TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE processes ADD COLUMN ppid INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN create_time INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN num_threads INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN num_fds INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN rss INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN vms INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN read_bytes INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE processes ADD COLUMN write_bytes INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alterStmts {
 		s.db.Exec(stmt)
@@ -224,16 +254,17 @@ func (s *Store) FullSync(clientID string, sync models.SyncRequest) bool {
 	if sync.Applications != nil {
 		tx.Exec(`DELETE FROM applications WHERE client_id=?`, clientID)
 		for _, a := range sync.Applications {
-			tx.Exec(`INSERT INTO applications (client_id, name, version, install_date, publisher) VALUES (?, ?, ?, ?, ?)`,
-				clientID, a.Name, a.Version, a.InstallDate, a.Publisher)
+			signedByJSON, _ := json.Marshal(a.SignedBy)
+			tx.Exec(`INSERT INTO applications (client_id, name, version, install_date, publisher, path, arch_kind, last_modified, signed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				clientID, a.Name, a.Version, a.InstallDate, a.Publisher, a.Path, a.ArchKind, a.LastModified, string(signedByJSON))
 		}
 	}
 
 	if sync.Processes != nil {
 		tx.Exec(`DELETE FROM processes WHERE client_id=?`, clientID)
 		for _, p := range sync.Processes {
-			tx.Exec(`INSERT INTO processes (client_id, pid, name, status, cpu_percent, memory_percent, command) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				clientID, p.PID, p.Name, p.Status, p.CPU, p.Memory, p.Command)
+			tx.Exec(`INSERT INTO processes (client_id, pid, name, status, cpu_percent, memory_percent, command, exe, cwd, username, ppid, create_time, num_threads, num_fds, rss, vms, read_bytes, write_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				clientID, p.PID, p.Name, p.Status, p.CPU, p.Memory, p.Command, p.Exe, p.Cwd, p.Username, p.Ppid, p.CreateTime, p.NumThreads, p.NumFDs, p.RSS, p.VMS, p.ReadBytes, p.WriteBytes)
 		}
 	}
 
@@ -283,7 +314,7 @@ func (s *Store) getOSInfo(clientID string) *models.OSInfo {
 }
 
 func (s *Store) getApplications(clientID string) []models.Application {
-	rows, err := s.db.Query(`SELECT name, version, install_date, publisher FROM applications WHERE client_id=? ORDER BY name`, clientID)
+	rows, err := s.db.Query(`SELECT name, version, install_date, publisher, path, arch_kind, last_modified, signed_by FROM applications WHERE client_id=? ORDER BY name`, clientID)
 	if err != nil {
 		return nil
 	}
@@ -292,14 +323,18 @@ func (s *Store) getApplications(clientID string) []models.Application {
 	var apps []models.Application
 	for rows.Next() {
 		var a models.Application
-		rows.Scan(&a.Name, &a.Version, &a.InstallDate, &a.Publisher)
+		var signedByJSON string
+		rows.Scan(&a.Name, &a.Version, &a.InstallDate, &a.Publisher, &a.Path, &a.ArchKind, &a.LastModified, &signedByJSON)
+		if signedByJSON != "" && signedByJSON != "null" {
+			json.Unmarshal([]byte(signedByJSON), &a.SignedBy)
+		}
 		apps = append(apps, a)
 	}
 	return apps
 }
 
 func (s *Store) getProcesses(clientID string) []models.Process {
-	rows, err := s.db.Query(`SELECT pid, name, status, cpu_percent, memory_percent, command FROM processes WHERE client_id=? ORDER BY cpu_percent DESC`, clientID)
+	rows, err := s.db.Query(`SELECT pid, name, status, cpu_percent, memory_percent, command, exe, cwd, username, ppid, create_time, num_threads, num_fds, rss, vms, read_bytes, write_bytes FROM processes WHERE client_id=? ORDER BY cpu_percent DESC`, clientID)
 	if err != nil {
 		return nil
 	}
@@ -308,10 +343,34 @@ func (s *Store) getProcesses(clientID string) []models.Process {
 	var procs []models.Process
 	for rows.Next() {
 		var p models.Process
-		rows.Scan(&p.PID, &p.Name, &p.Status, &p.CPU, &p.Memory, &p.Command)
+		rows.Scan(&p.PID, &p.Name, &p.Status, &p.CPU, &p.Memory, &p.Command, &p.Exe, &p.Cwd, &p.Username, &p.Ppid, &p.CreateTime, &p.NumThreads, &p.NumFDs, &p.RSS, &p.VMS, &p.ReadBytes, &p.WriteBytes)
 		procs = append(procs, p)
 	}
 	return procs
+}
+
+func (s *Store) GetProcess(clientID string, pid int32) (*models.Process, bool) {
+	p := &models.Process{}
+	err := s.db.QueryRow(`SELECT pid, name, status, cpu_percent, memory_percent, command, exe, cwd, username, ppid, create_time, num_threads, num_fds, rss, vms, read_bytes, write_bytes FROM processes WHERE client_id=? AND pid=?`, clientID, pid).
+		Scan(&p.PID, &p.Name, &p.Status, &p.CPU, &p.Memory, &p.Command, &p.Exe, &p.Cwd, &p.Username, &p.Ppid, &p.CreateTime, &p.NumThreads, &p.NumFDs, &p.RSS, &p.VMS, &p.ReadBytes, &p.WriteBytes)
+	if err != nil {
+		return nil, false
+	}
+	return p, true
+}
+
+func (s *Store) GetApplication(clientID string, name string) (*models.Application, bool) {
+	a := &models.Application{}
+	var signedByJSON string
+	err := s.db.QueryRow(`SELECT name, version, install_date, publisher, path, arch_kind, last_modified, signed_by FROM applications WHERE client_id=? AND name=?`, clientID, name).
+		Scan(&a.Name, &a.Version, &a.InstallDate, &a.Publisher, &a.Path, &a.ArchKind, &a.LastModified, &signedByJSON)
+	if err != nil {
+		return nil, false
+	}
+	if signedByJSON != "" && signedByJSON != "null" {
+		json.Unmarshal([]byte(signedByJSON), &a.SignedBy)
+	}
+	return a, true
 }
 
 func (s *Store) ListClients() []*models.Client {

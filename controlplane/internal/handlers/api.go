@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -34,7 +35,9 @@ func (a *API) RegisterRoutes(r chi.Router) {
 	r.Get("/api/clients/{id}", a.GetClient)
 	r.Delete("/api/clients/{id}", a.DeregisterClient)
 	r.Get("/api/clients/{id}/apps", a.GetClientApps)
+	r.Get("/api/clients/{id}/apps/{name}", a.GetClientApp)
 	r.Get("/api/clients/{id}/processes", a.GetClientProcesses)
+	r.Get("/api/clients/{id}/processes/{pid}", a.GetClientProcess)
 	r.Get("/api/clients/{id}/stats", a.GetClientStats)
 	r.Get("/api/clients/{id}/osinfo", a.GetClientOSInfo)
 	r.Post("/api/clients/{id}/commands", a.SendCommand)
@@ -270,6 +273,56 @@ func (a *API) GetClientProcesses(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(client.Processes)
+}
+
+// GetClientApp godoc
+// @Summary      Get a specific application
+// @Description  Returns detailed info for a single application by name
+// @Tags         clients
+// @Produce      json
+// @Param        id     path      string  true  "Client ID"
+// @Param        name   path      string  true  "Application name"
+// @Success      200    {object}  models.Application
+// @Failure      404    {string}  string  "not found"
+// @Router       /api/clients/{id}/apps/{name} [get]
+func (a *API) GetClientApp(w http.ResponseWriter, r *http.Request) {
+	clientID := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+
+	app, ok := a.store.GetApplication(clientID, name)
+	if !ok {
+		http.Error(w, "application not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(app)
+}
+
+// GetClientProcess godoc
+// @Summary      Get a specific process
+// @Description  Returns detailed info for a single process by PID
+// @Tags         clients
+// @Produce      json
+// @Param        id     path      string  true  "Client ID"
+// @Param        pid    path      int     true  "Process ID"
+// @Success      200    {object}  models.Process
+// @Failure      404    {string}  string  "not found"
+// @Router       /api/clients/{id}/processes/{pid} [get]
+func (a *API) GetClientProcess(w http.ResponseWriter, r *http.Request) {
+	clientID := chi.URLParam(r, "id")
+	pidStr := chi.URLParam(r, "pid")
+	var pid int32
+	fmt.Sscanf(pidStr, "%d", &pid)
+
+	proc, ok := a.store.GetProcess(clientID, pid)
+	if !ok {
+		http.Error(w, "process not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(proc)
 }
 
 // GetClientStats godoc
