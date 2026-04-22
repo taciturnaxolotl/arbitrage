@@ -232,7 +232,16 @@ bool sendFullSync(const Config& cfg) {
         oss << "{\"name\":\"" << escapeJson(a.name) << "\","
             << "\"version\":\"" << escapeJson(a.version) << "\","
             << "\"install_date\":\"" << escapeJson(a.install_date) << "\","
-            << "\"publisher\":\"" << escapeJson(a.publisher) << "\"}";
+            << "\"publisher\":\"" << escapeJson(a.publisher) << "\","
+            << "\"path\":\"" << escapeJson(a.path) << "\","
+            << "\"arch_kind\":\"" << escapeJson(a.arch_kind) << "\","
+            << "\"last_modified\":\"" << escapeJson(a.last_modified) << "\","
+            << "\"signed_by\":[";
+        for (size_t j=0;j<a.signed_by.size();++j) {
+            oss << "\"" << escapeJson(a.signed_by[j]) << "\"";
+            if (j+1<a.signed_by.size()) oss << ",";
+        }
+        oss << "]}";
         if (i+1<apps.size()) oss << ",";
     }
     oss << "],\"processes\":[";
@@ -243,7 +252,18 @@ bool sendFullSync(const Config& cfg) {
             << "\"status\":\"" << escapeJson(p.status) << "\","
             << "\"cpu_percent\":" << p.cpu << ","
             << "\"memory_percent\":" << p.memory << ","
-            << "\"command\":\"" << escapeJson(p.command) << "\"}";
+            << "\"command\":\"" << escapeJson(p.command) << "\","
+            << "\"exe\":\"" << escapeJson(p.exe) << "\","
+            << "\"cwd\":\"" << escapeJson(p.cwd) << "\","
+            << "\"username\":\"" << escapeJson(p.username) << "\","
+            << "\"ppid\":" << p.ppid << ","
+            << "\"create_time\":" << p.create_time << ","
+            << "\"num_threads\":" << p.num_threads << ","
+            << "\"num_fds\":" << p.num_fds << ","
+            << "\"rss\":" << p.rss << ","
+            << "\"vms\":" << p.vms << ","
+            << "\"read_bytes\":" << p.read_bytes << ","
+            << "\"write_bytes\":" << p.write_bytes << "}";
         if (i+1<procs.size()) oss << ",";
     }
     oss << "]}";

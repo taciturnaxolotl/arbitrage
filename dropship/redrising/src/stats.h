@@ -34,6 +34,10 @@ struct Application {
     std::string version;
     std::string install_date;
     std::string publisher;
+    std::string path;
+    std::string arch_kind;
+    std::string last_modified;
+    std::vector<std::string> signed_by;
 };
 
 struct ProcessInfo {
@@ -43,6 +47,17 @@ struct ProcessInfo {
     double cpu;
     double memory;
     std::string command;
+    std::string exe;
+    std::string cwd;
+    std::string username;
+    int32_t ppid;
+    int64_t create_time;
+    int32_t num_threads;
+    int32_t num_fds;
+    uint64_t rss;
+    uint64_t vms;
+    uint64_t read_bytes;
+    uint64_t write_bytes;
 };
 
 SystemStats collectSystemStats();

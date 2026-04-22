@@ -85,7 +85,6 @@ OSInfo collectOSInfo(const Config& cfg) {
 }
 
 std::vector<ProcessInfo> collectProcesses() {
-    // Get system CPU time for per-process CPU calculation
     static FILETIME prevSysIdle{}, prevSysKernel{}, prevSysUser{};
     FILETIME sysIdle, sysKernel, sysUser;
     ULONGLONG sysTotalDiff = 0;
@@ -108,35 +107,75 @@ std::vector<ProcessInfo> collectProcesses() {
         do {
             ProcessInfo pi{};
             pi.pid = (int32_t)pe.th32ProcessID;
+            pi.ppid = (int32_t)pe.th32ParentProcessID;
             pi.name.assign(pe.szExeFile, pe.szExeFile + wcslen(pe.szExeFile));
             pi.status = "running";
+            pi.num_threads = (int32_t)pe.cntThreads;
 
-            // Open process to query memory and CPU times
             HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pe.th32ProcessID);
             if (hProc) {
                 PROCESS_MEMORY_COUNTERS_EX pmc{};
                 if (GetProcessMemoryInfo(hProc, (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
                     pi.memory = (totalPhysMem > 0) ? (double)pmc.WorkingSetSize * 100.0 / (double)totalPhysMem : 0.0;
+                    pi.rss = pmc.WorkingSetSize;
+                    pi.vms = pmc.PagefileUsage;
                 }
 
                 FILETIME ftCreate, ftExit, ftKernel, ftUser;
-                if (GetProcessTimes(hProc, &ftCreate, &ftExit, &ftKernel, &ftUser) && sysTotalDiff > 0) {
-                    static std::map<DWORD, ULONGLONG> prevProcTime;
-                    ULONGLONG procTime = FileTimeToULL(ftKernel) + FileTimeToULL(ftUser);
-                    auto it = prevProcTime.find(pe.th32ProcessID);
-                    if (it != prevProcTime.end()) {
-                        ULONGLONG procDiff = procTime - it->second;
-                        pi.cpu = (double)procDiff * 100.0 / (double)sysTotalDiff;
+                if (GetProcessTimes(hProc, &ftCreate, &ftExit, &ftKernel, &ftUser)) {
+                    pi.create_time = (int64_t)(FileTimeToULL(ftCreate) / 10000);
+                    if (sysTotalDiff > 0) {
+                        static std::map<DWORD, ULONGLONG> prevProcTime;
+                        ULONGLONG procTime = FileTimeToULL(ftKernel) + FileTimeToULL(ftUser);
+                        auto it = prevProcTime.find(pe.th32ProcessID);
+                        if (it != prevProcTime.end()) {
+                            ULONGLONG procDiff = procTime - it->second;
+                            pi.cpu = (double)procDiff * 100.0 / (double)sysTotalDiff;
+                        }
+                        prevProcTime[pe.th32ProcessID] = procTime;
                     }
-                    prevProcTime[pe.th32ProcessID] = procTime;
                 }
 
-                // Get command line from process
-                // Try QueryFullProcessImageName for the executable path
                 wchar_t exePath[MAX_PATH] = {};
                 DWORD exePathSize = MAX_PATH;
                 if (QueryFullProcessImageNameW(hProc, 0, exePath, &exePathSize)) {
-                    pi.command.assign(exePath, exePath + exePathSize);
+                    pi.exe.assign(exePath, exePath + exePathSize);
+                    pi.command = pi.exe;
+                }
+
+                // Get process owner username
+                HANDLE hToken = NULL;
+                if (OpenProcessToken(hProc, TOKEN_QUERY, &hToken)) {
+                    DWORD needed = 0;
+                    GetTokenInformation(hToken, TokenUser, NULL, 0, &needed);
+                    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && needed > 0) {
+                        std::vector<BYTE> buf(needed);
+                        if (GetTokenInformation(hToken, TokenUser, buf.data(), needed, &needed)) {
+                            TOKEN_USER* tu = (TOKEN_USER*)buf.data();
+                            wchar_t name[256] = {}, domain[256] = {};
+                            DWORD nameLen = 256, domainLen = 256;
+                            SID_NAME_USE sidType;
+                            if (LookupAccountSidW(NULL, tu->User.Sid, name, &nameLen, domain, &domainLen, &sidType)) {
+                                pi.username.assign(domain, domain + domainLen);
+                                pi.username += "\\";
+                                pi.username.append(name, name + nameLen);
+                            }
+                        }
+                    }
+                    CloseHandle(hToken);
+                }
+
+                // Get handle count for num_fds
+                DWORD handleCount = 0;
+                if (GetProcessHandleCount(hProc, &handleCount)) {
+                    pi.num_fds = (int32_t)handleCount;
+                }
+
+                // IO counters for read/write bytes
+                IO_COUNTERS ioCounters{};
+                if (GetProcessIoCounters(hProc, &ioCounters)) {
+                    pi.read_bytes = ioCounters.ReadTransferCount;
+                    pi.write_bytes = ioCounters.WriteTransferCount;
                 }
 
                 CloseHandle(hProc);
@@ -165,7 +204,6 @@ static std::string readRegStr(HKEY root, const char* subkey, const char* value) 
 std::vector<Application> collectApplications() {
     std::vector<Application> apps;
     HKEY hKey = NULL;
-    // Enumerate 64-bit and 32-bit uninstall keys
     const char* keys[] = {
         "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
         "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
@@ -190,6 +228,14 @@ std::vector<Application> collectApplications() {
             app.version = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "DisplayVersion");
             app.install_date = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "InstallDate");
             app.publisher = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "Publisher");
+            app.path = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "InstallLocation");
+            std::string uninstallStr = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "UninstallString");
+            if (uninstallStr.find("Program Files (x86)") != std::string::npos) {
+                app.arch_kind = "x86";
+            } else if (uninstallStr.find("Program Files") != std::string::npos) {
+                app.arch_kind = "x64";
+            }
+            app.last_modified = readRegStr(HKEY_LOCAL_MACHINE, fullSubkey, "LastModified");
             apps.push_back(std::move(app));
             subkeyNameSize = sizeof(subkeyName);
             subkeyIndex++;
@@ -231,7 +277,16 @@ std::string buildStatsJson(const Config& cfg) {
         oss << "{\"name\":\"" << escapeJson(a.name) << "\","
             << "\"version\":\"" << escapeJson(a.version) << "\","
             << "\"install_date\":\"" << escapeJson(a.install_date) << "\","
-            << "\"publisher\":\"" << escapeJson(a.publisher) << "\"}";
+            << "\"publisher\":\"" << escapeJson(a.publisher) << "\","
+            << "\"path\":\"" << escapeJson(a.path) << "\","
+            << "\"arch_kind\":\"" << escapeJson(a.arch_kind) << "\","
+            << "\"last_modified\":\"" << escapeJson(a.last_modified) << "\","
+            << "\"signed_by\":[";
+        for (size_t j=0;j<a.signed_by.size();++j) {
+            oss << "\"" << escapeJson(a.signed_by[j]) << "\"";
+            if (j+1<a.signed_by.size()) oss << ",";
+        }
+        oss << "]}";
         if (i+1<apps.size()) oss << ",";
     }
     oss << "]";
@@ -243,7 +298,18 @@ std::string buildStatsJson(const Config& cfg) {
             << "\"status\":\"" << escapeJson(p.status) << "\","
             << "\"cpu_percent\":" << p.cpu << ","
             << "\"memory_percent\":" << p.memory << ","
-            << "\"command\":\"" << escapeJson(p.command) << "\"}";
+            << "\"command\":\"" << escapeJson(p.command) << "\","
+            << "\"exe\":\"" << escapeJson(p.exe) << "\","
+            << "\"cwd\":\"" << escapeJson(p.cwd) << "\","
+            << "\"username\":\"" << escapeJson(p.username) << "\","
+            << "\"ppid\":" << p.ppid << ","
+            << "\"create_time\":" << p.create_time << ","
+            << "\"num_threads\":" << p.num_threads << ","
+            << "\"num_fds\":" << p.num_fds << ","
+            << "\"rss\":" << p.rss << ","
+            << "\"vms\":" << p.vms << ","
+            << "\"read_bytes\":" << p.read_bytes << ","
+            << "\"write_bytes\":" << p.write_bytes << "}";
         if (i+1<procs.size()) oss << ",";
     }
     oss << "]}";
