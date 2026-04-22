@@ -32,6 +32,23 @@
 .sync-bar .sync-fill.completed { background: #3fb950; }
 .sync-bar .sync-fill.failed, .sync-bar .sync-fill.expired { background: #f85149; }
 .sync-bar .sync-label { font-size: 12px; color: #8b949e; white-space: nowrap; }
+.terminal { background: #1a1a2e; border-radius: 0 0 8px 8px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; display: flex; flex-direction: column; height: 520px; }
+.terminal-output { flex: 1; overflow-y: auto; padding: 12px 16px; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+.terminal-output::-webkit-scrollbar { width: 6px; }
+.terminal-output::-webkit-scrollbar-track { background: transparent; }
+.terminal-output::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+.terminal-prompt { color: #75DF0B; font-weight: 600; }
+.terminal-prompt .host { color: #1BC9E7; }
+.terminal-input { display: flex; align-items: center; padding: 8px 16px; border-top: 1px solid #30363d; background: #16162a; border-radius: 0 0 8px 8px; }
+.terminal-input .prompt-label { color: #75DF0B; font-weight: 600; margin-right: 8px; white-space: nowrap; }
+.terminal-input input { flex: 1; border: none; background: transparent; color: #e6edf3; font-family: inherit; font-size: inherit; outline: none; }
+.terminal-status { color: #8b949e; font-size: 11px; padding: 4px 16px; background: #16162a; border-top: 1px solid #21262d; }
+.terminal-status .spinner { animation: spin 1s linear infinite; display: inline-block; }
+.t-green { color: #3fb950; }
+.t-red { color: #f85149; }
+.t-yellow { color: #d29922; }
+.t-cyan { color: #1BC9E7; }
+.t-dim { color: #8b949e; }
 </style>
 </head>
 <body>
@@ -88,6 +105,7 @@
       <div class="tab active" onclick="switchTab('processes')">Processes</div>
       <div class="tab" onclick="switchTab('applications')">Applications</div>
       <div class="tab" onclick="switchTab('commands')">Command History</div>
+      <div class="tab" onclick="switchTab('terminal')">Terminal</div>
     </div>
 
     <div class="tab-content active" id="tab-processes">
@@ -121,6 +139,18 @@
           <button class="btn btn-sm" onclick="closeCommandDetail()">Close</button>
         </div>
         <pre id="command-result" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;max-height:400px;overflow:auto;font-size:13px;color:#e6edf3;white-space:pre-wrap;word-break:break-all;"></pre>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-terminal">
+      <div class="terminal" id="term">
+        <div class="terminal-output" id="term-output"><span class="t-dim">Ready. Type a command and press Enter.</span>
+</div>
+        <div class="terminal-input">
+          <span class="prompt-label" id="term-prompt">$</span>
+          <input id="term-input" placeholder="Enter command..." autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="terminal-status" id="term-status"></div>
       </div>
     </div>
   </div>
@@ -424,6 +454,121 @@ async function sendCommand() {
 }
 
 function connectWS() { const proto = location.protocol === 'https:' ? 'wss' : 'ws'; const ws = new WebSocket(`${proto}://${location.host}/ws`); ws.onmessage = (e) => { const msg = JSON.parse(e.data); if (msg.type === 'command_acknowledged' || msg.type === 'command_completed' || msg.type === 'command_created' || msg.type === 'client_data_updated') { loadCommands(); loadClient(); } }; ws.onclose = () => setTimeout(connectWS, 3000); }
+
+let terminalHistory = [];
+let terminalHistIdx = -1;
+
+const termOutput = () => document.getElementById('term-output');
+const termInput = () => document.getElementById('term-input');
+const termStatus = () => document.getElementById('term-status');
+
+function termWrite(html) { const el = termOutput(); el.innerHTML += html; el.scrollTop = el.scrollHeight; }
+function termWriteLine(text) { termWrite(esc(text) + '\n'); }
+
+function termPromptHtml() {
+  const host = document.getElementById('hostname')?.textContent || 'host';
+  return `<span class="terminal-prompt"><span class="host">${esc(host)}</span> $</span> `;
+}
+
+function termSetStatus(html) { const el = termStatus(); if (el) el.innerHTML = html; }
+function termClear() { const el = termOutput(); el.innerHTML = ''; }
+
+function termHandleResult(cmd) {
+  if (cmd.error) {
+    termWrite(`<span class="t-red">${esc(cmd.error)}</span>\n`);
+  } else if (cmd.result) {
+    if (typeof cmd.result === 'object' && cmd.result.name && cmd.result.content) {
+      const bytes = atob(cmd.result.content);
+      const arr = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+      const blob = new Blob([arr]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = cmd.result.name; a.click();
+      URL.revokeObjectURL(url);
+      termWrite(`<span class="t-green">Downloaded:</span> ${esc(cmd.result.name)} (${formatBytes(parseInt(cmd.result.size) || arr.length)})\n`);
+    } else {
+      const text = typeof cmd.result === 'string' ? cmd.result : JSON.stringify(cmd.result, null, 2);
+      termWrite(esc(text) + '\n');
+    }
+  }
+}
+
+async function termExecute(cmd) {
+  if (!cmd.trim()) return;
+  terminalHistory.push(cmd);
+  terminalHistIdx = terminalHistory.length;
+
+  const isDownload = cmd.trim().startsWith('download ');
+  let type = 'exec';
+  let payload = { command: cmd };
+
+  if (isDownload) {
+    const path = cmd.trim().substring(9).trim();
+    if (!path) { termWriteLine('Usage: download <path>'); return; }
+    type = 'download';
+    payload = { path };
+  } else if (cmd.trim() === 'clear') {
+    termClear(); return;
+  } else if (cmd.trim() === 'help') {
+    termWrite(`<span class="t-cyan">Available commands:</span>\n`);
+    termWrite(`  <span class="t-green">download</span> &lt;path&gt;  Download a file from the host\n`);
+    termWrite(`  <span class="t-green">clear</span>            Clear terminal output\n`);
+    termWrite(`  <span class="t-green">help</span>             Show this help\n`);
+    termWrite(`  Any other input is executed as a shell command\n`);
+    return;
+  }
+
+  termWrite(termPromptHtml() + esc(cmd) + '\n');
+  termSetStatus('<span class="spinner">⟳</span> Executing...');
+  termInput().disabled = true;
+
+  try {
+    const resp = await fetch(`/api/clients/${clientId}/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, payload, timeout: 30 })
+    });
+    const cmd = await resp.json();
+    termSetStatus('');
+    termInput().disabled = false;
+    termInput().focus();
+
+    if (resp.status === 504) {
+      termWrite(`<span class="t-yellow">Command timed out</span> (status: ${cmd.status})\n`);
+      termWrite(`<span class="t-dim">The client may be offline or slow to respond. Check Command History for updates.</span>\n`);
+    } else if (!resp.ok) {
+      termWrite(`<span class="t-red">Error: ${esc(cmd.error || resp.statusText)}</span>\n`);
+    } else {
+      termHandleResult(cmd);
+      loadCommands();
+    }
+  } catch(e) {
+    termWrite(`<span class="t-red">Error: ${esc(e.message)}</span>\n`);
+    termSetStatus('');
+    termInput().disabled = false;
+    termInput().focus();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const input = termInput();
+  if (!input) return;
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const cmd = input.value;
+      input.value = '';
+      termExecute(cmd);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (terminalHistIdx > 0) { terminalHistIdx--; input.value = terminalHistory[terminalHistIdx]; }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (terminalHistIdx < terminalHistory.length - 1) { terminalHistIdx++; input.value = terminalHistory[terminalHistIdx]; }
+      else { terminalHistIdx = terminalHistory.length; input.value = ''; }
+    }
+  });
+});
 
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });

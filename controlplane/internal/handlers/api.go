@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/models"
@@ -41,6 +42,7 @@ func (a *API) RegisterRoutes(r chi.Router) {
 	r.Get("/api/clients/{id}/stats", a.GetClientStats)
 	r.Get("/api/clients/{id}/osinfo", a.GetClientOSInfo)
 	r.Post("/api/clients/{id}/commands", a.SendCommand)
+	r.Post("/api/clients/{id}/exec", a.ExecSync)
 	r.Get("/api/clients/{id}/commands", a.GetClientCommands)
 	r.Get("/api/commands/{commandID}", a.GetCommand)
 	r.Get("/api/dashboard", a.GetDashboard)
@@ -415,6 +417,65 @@ func (a *API) SendCommand(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cmd)
+}
+
+// ExecSync godoc
+// @Summary      Execute command synchronously
+// @Description  Sends a command to a client and waits up to 30s for the result. Returns the completed command with output.
+// @Tags         commands
+// @Accept       json
+// @Produce      json
+// @Param        id    path      string               true  "Client ID"
+// @Param        body  body      models.CommandRequest true  "Command to execute"
+// @Success      200   {object}  models.Command
+// @Failure      400   {string}  string  "invalid request"
+// @Failure      404   {string}  string  "client not found"
+// @Failure      504   {string}  string  "command timed out"
+// @Router       /api/clients/{id}/exec [post]
+func (a *API) ExecSync(w http.ResponseWriter, r *http.Request) {
+	clientID := chi.URLParam(r, "id")
+
+	_, ok := a.store.GetClient(clientID)
+	if !ok {
+		http.Error(w, "client not found", http.StatusNotFound)
+		return
+	}
+
+	var req models.CommandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Type == "" {
+		req.Type = "exec"
+	}
+	if req.Type == "exec" && req.Payload == nil {
+		http.Error(w, "payload required for exec", http.StatusBadRequest)
+		return
+	}
+	if req.Timeout <= 0 {
+		req.Timeout = 30
+	}
+
+	cmd := a.store.CreateCommand(clientID, req)
+	a.hub.Broadcast("command_created", cmd)
+
+	waitTimeout := time.Duration(req.Timeout+15) * time.Second
+	result, found := a.store.WaitForCommand(cmd.ID, waitTimeout)
+	if !found {
+		http.Error(w, "command not found", http.StatusNotFound)
+		return
+	}
+
+	if result.Status == "pending" || result.Status == "acknowledged" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // GetClientCommands godoc

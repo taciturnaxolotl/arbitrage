@@ -7,6 +7,7 @@ struct CommandInfo {
     std::string id;
     std::string type;
     std::string command;
+    std::string path;
 };
 
 std::vector<CommandInfo> fetchPendingCommands(const Config& cfg);

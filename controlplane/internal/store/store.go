@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,7 +19,9 @@ const offlineThreshold = 30 * time.Second
 const defaultCommandTimeout = 5 * time.Minute
 
 type Store struct {
-	db *sql.DB
+	db          *sql.DB
+	cmdWaiters  map[string][]chan struct{}
+	cmdWaitersMu sync.Mutex
 }
 
 func New(dbPath string) *Store {
@@ -34,7 +37,7 @@ func New(dbPath string) *Store {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA foreign_keys=ON")
 
-	s := &Store{db: db}
+	s := &Store{db: db, cmdWaiters: make(map[string][]chan struct{})}
 	s.migrate()
 	return s
 }
@@ -393,6 +396,43 @@ func (s *Store) DeregisterClient(id string) {
 	s.db.Exec(`DELETE FROM clients WHERE id=?`, id)
 }
 
+func (s *Store) notifyCommandComplete(commandID string) {
+	s.cmdWaitersMu.Lock()
+	waiters := s.cmdWaiters[commandID]
+	delete(s.cmdWaiters, commandID)
+	s.cmdWaitersMu.Unlock()
+	for _, ch := range waiters {
+		close(ch)
+	}
+}
+
+func (s *Store) WaitForCommand(commandID string, timeout time.Duration) (*models.Command, bool) {
+	ch := make(chan struct{}, 1)
+	s.cmdWaitersMu.Lock()
+	s.cmdWaiters[commandID] = append(s.cmdWaiters[commandID], ch)
+	s.cmdWaitersMu.Unlock()
+
+	select {
+	case <-ch:
+		cmd, ok := s.GetCommand(commandID)
+		return cmd, ok
+	case <-time.After(timeout):
+		s.cmdWaitersMu.Lock()
+		waiters := s.cmdWaiters[commandID]
+		for i, w := range waiters {
+			if w == ch {
+				s.cmdWaiters[commandID] = append(waiters[:i], waiters[i+1:]...)
+				break
+			}
+		}
+		if len(s.cmdWaiters[commandID]) == 0 {
+			delete(s.cmdWaiters, commandID)
+		}
+		s.cmdWaitersMu.Unlock()
+		return s.GetCommand(commandID)
+	}
+}
+
 func (s *Store) MarkStaleClients() {
 	cutoff := time.Now().Add(-offlineThreshold)
 	s.db.Exec(`UPDATE clients SET status='offline' WHERE last_heartbeat < ? AND status='online'`, cutoff)
@@ -459,6 +499,7 @@ func (s *Store) ExpireCommands() {
 
 	for _, id := range expired {
 		s.db.Exec(`UPDATE commands SET status='expired', error='command timed out', completed_at=? WHERE id=?`, now, id)
+		s.notifyCommandComplete(id)
 	}
 }
 
@@ -508,6 +549,7 @@ func (s *Store) CompleteCommand(result models.CommandResult) (*models.Command, b
 	cmd.Result = result.Result
 	cmd.Error = result.Error
 	cmd.CompletedAt = &now
+	s.notifyCommandComplete(result.CommandID)
 	return cmd, true
 }
 
