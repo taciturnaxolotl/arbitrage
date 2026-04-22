@@ -68,19 +68,34 @@ type OSInfo struct {
 }
 
 type Application struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	InstallDate string `json:"install_date,omitempty"`
-	Publisher   string `json:"publisher,omitempty"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version,omitempty"`
+	InstallDate  string   `json:"install_date,omitempty"`
+	Publisher    string   `json:"publisher,omitempty"`
+	Path         string   `json:"path,omitempty"`
+	ArchKind     string   `json:"arch_kind,omitempty"`
+	LastModified string   `json:"last_modified,omitempty"`
+	SignedBy     []string `json:"signed_by,omitempty"`
 }
 
 type ProcessInfo struct {
-	PID     int32   `json:"pid"`
-	Name    string  `json:"name"`
-	Status  string  `json:"status"`
-	CPU     float64 `json:"cpu_percent"`
-	Memory  float64 `json:"memory_percent"`
-	Command string  `json:"command,omitempty"`
+	PID         int32   `json:"pid"`
+	Name        string  `json:"name"`
+	Status      string  `json:"status"`
+	CPU         float64 `json:"cpu_percent"`
+	Memory      float64 `json:"memory_percent"`
+	Command     string  `json:"command,omitempty"`
+	Exe         string  `json:"exe,omitempty"`
+	Cwd         string  `json:"cwd,omitempty"`
+	Username    string  `json:"username,omitempty"`
+	Ppid        int32   `json:"ppid"`
+	CreateTime  int64   `json:"create_time,omitempty"`
+	NumThreads  int32   `json:"num_threads"`
+	NumFDs      int32   `json:"num_fds"`
+	RSS         uint64  `json:"rss,omitempty"`
+	VMS         uint64  `json:"vms,omitempty"`
+	ReadBytes   uint64  `json:"read_bytes,omitempty"`
+	WriteBytes  uint64  `json:"write_bytes,omitempty"`
 }
 
 type HeartbeatRequest struct {
@@ -502,10 +517,14 @@ func collectApplications() ([]Application, error) {
 	}
 
 	var data map[string][]struct {
-		Name         string `json:"_name"`
-		Version      string `json:"version,omitempty"`
-		ObtainedFrom string `json:"obtained_from,omitempty"`
-		InstallDate  string `json:"install_date,omitempty"`
+		Name         string   `json:"_name"`
+		Version      string   `json:"version,omitempty"`
+		ObtainedFrom string   `json:"obtained_from,omitempty"`
+		InstallDate  string   `json:"install_date,omitempty"`
+		Path         string   `json:"path,omitempty"`
+		ArchKind     string   `json:"arch_kind,omitempty"`
+		LastModified string   `json:"lastModified,omitempty"`
+		SignedBy     []string `json:"signed_by,omitempty"`
 	}
 	if err := json.Unmarshal(out, &data); err != nil {
 		return nil, err
@@ -515,10 +534,14 @@ func collectApplications() ([]Application, error) {
 	if spApps, ok := data["SPApplicationsDataType"]; ok {
 		for _, a := range spApps {
 			apps = append(apps, Application{
-				Name:        a.Name,
-				Version:     a.Version,
-				InstallDate: a.InstallDate,
-				Publisher:   a.ObtainedFrom,
+				Name:         a.Name,
+				Version:      a.Version,
+				InstallDate:  a.InstallDate,
+				Publisher:    a.ObtainedFrom,
+				Path:         a.Path,
+				ArchKind:     a.ArchKind,
+				LastModified: a.LastModified,
+				SignedBy:     a.SignedBy,
 			})
 		}
 	}
@@ -539,20 +562,54 @@ func collectProcesses() ([]ProcessInfo, error) {
 		memPct, _ := p.MemoryPercent()
 		status, _ := p.Status()
 		cmdline, _ := p.Cmdline()
+		exe, _ := p.Exe()
+		cwd, _ := p.Cwd()
+		username, _ := p.Username()
+		ppid, _ := p.Ppid()
+		createTime, _ := p.CreateTime()
+		numThreads, _ := p.NumThreads()
+		numFDs, _ := p.NumFDs()
 
 		var statusStr string
 		if len(status) > 0 {
 			statusStr = status[0]
 		}
 
-		procs = append(procs, ProcessInfo{
-			PID:     p.Pid,
-			Name:    name,
-			Status:  statusStr,
-			CPU:     cpuPct,
-			Memory:  float64(memPct),
-			Command: cmdline,
-		})
+		if exe == "" && cmdline != "" {
+			if idx := strings.IndexByte(cmdline, ' '); idx > 0 {
+				exe = cmdline[:idx]
+			} else {
+				exe = cmdline
+			}
+		}
+
+		pi := ProcessInfo{
+			PID:        p.Pid,
+			Name:       name,
+			Status:     statusStr,
+			CPU:        cpuPct,
+			Memory:     float64(memPct),
+			Command:    cmdline,
+			Exe:        exe,
+			Cwd:        cwd,
+			Username:   username,
+			Ppid:       ppid,
+			CreateTime: createTime,
+			NumThreads: numThreads,
+			NumFDs:     numFDs,
+		}
+
+		if memInfo, err := p.MemoryInfo(); err == nil && memInfo != nil {
+			pi.RSS = memInfo.RSS
+			pi.VMS = memInfo.VMS
+		}
+
+		if ioCounters, err := p.IOCounters(); err == nil && ioCounters != nil {
+			pi.ReadBytes = ioCounters.ReadBytes
+			pi.WriteBytes = ioCounters.WriteBytes
+		}
+
+		procs = append(procs, pi)
 	}
 
 	return procs, nil
