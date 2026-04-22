@@ -17,6 +17,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/docs"
@@ -49,18 +52,30 @@ func main() {
 	h := ws.NewHub()
 	api := handlers.NewAPI(s, h)
 
-	mux := http.NewServeMux()
+	r := chi.NewRouter()
 
-	mux.HandleFunc("GET /auth/login", auth.LoginHandler)
-	mux.HandleFunc("GET /auth/callback", auth.CallbackHandler)
-	mux.HandleFunc("GET /auth/logout", auth.LogoutHandler)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
 
-	api.RegisterRoutes(mux)
+	r.Get("/auth/login", auth.LoginHandler)
+	r.Get("/auth/callback", auth.CallbackHandler)
+	r.Get("/auth/logout", auth.LogoutHandler)
 
-	mux.HandleFunc("GET /swagger/", httpSwagger.Handler(
+	api.RegisterRoutes(r)
+
+	r.Get("/swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
-	mux.HandleFunc("GET /swagger/doc.json", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/swagger/doc.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(docs.SwaggerInfo.ReadDoc()))
 	})
@@ -69,12 +84,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to get static fs: %v", err)
 	}
-	mux.Handle("/", auth.RequireAuth(http.FileServer(http.FS(staticContent))))
-	mux.Handle("/ws", auth.RequireAuth(http.HandlerFunc(h.HandleWebSocket)))
+	r.Handle("/*", auth.RequireAuth(http.FileServer(http.FS(staticContent))))
+	r.Get("/ws", auth.RequireAuth(http.HandlerFunc(h.HandleWebSocket)).ServeHTTP)
 
 	go s.StaleChecker()
-
-	handler := middleware.CORS(mux)
 
 	addr := ":8080"
 	fmt.Printf("Control plane server starting on %s\n", addr)
@@ -86,7 +99,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      handler,
+		Handler:      r,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

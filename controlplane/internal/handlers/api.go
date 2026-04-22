@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/models"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/store"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/ws"
@@ -18,29 +19,32 @@ func NewAPI(s *store.Store, h *ws.Hub) *API {
 	return &API{store: s, hub: h}
 }
 
-func (a *API) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/register", a.RegisterClient)
-	mux.HandleFunc("POST /api/heartbeat", a.ClientAuth(a.Heartbeat))
-	mux.HandleFunc("POST /api/sync", a.ClientAuth(a.FullSync))
-	mux.HandleFunc("POST /api/commands/ack", a.ClientAuth(a.AckCommand))
-	mux.HandleFunc("POST /api/commands/result", a.ClientAuth(a.ReportCommandResult))
+func (a *API) RegisterRoutes(r chi.Router) {
+	r.Post("/api/register", a.RegisterClient)
 
-	mux.HandleFunc("GET /api/clients", a.ListClients)
-	mux.HandleFunc("GET /api/clients/{id}", a.GetClient)
-	mux.HandleFunc("DELETE /api/clients/{id}", a.DeregisterClient)
-	mux.HandleFunc("GET /api/clients/{id}/apps", a.GetClientApps)
-	mux.HandleFunc("GET /api/clients/{id}/processes", a.GetClientProcesses)
-	mux.HandleFunc("GET /api/clients/{id}/stats", a.GetClientStats)
-	mux.HandleFunc("GET /api/clients/{id}/osinfo", a.GetClientOSInfo)
-	mux.HandleFunc("POST /api/clients/{id}/commands", a.SendCommand)
-	mux.HandleFunc("GET /api/clients/{id}/commands", a.GetClientCommands)
-	mux.HandleFunc("GET /api/commands/{commandID}", a.GetCommand)
-	mux.HandleFunc("GET /api/dashboard", a.GetDashboard)
-	mux.HandleFunc("GET /ws", a.hub.HandleWebSocket)
+	r.Group(func(r chi.Router) {
+		r.Use(a.ClientAuth)
+		r.Post("/api/heartbeat", a.Heartbeat)
+		r.Post("/api/sync", a.FullSync)
+		r.Post("/api/commands/ack", a.AckCommand)
+		r.Post("/api/commands/result", a.ReportCommandResult)
+	})
+
+	r.Get("/api/clients", a.ListClients)
+	r.Get("/api/clients/{id}", a.GetClient)
+	r.Delete("/api/clients/{id}", a.DeregisterClient)
+	r.Get("/api/clients/{id}/apps", a.GetClientApps)
+	r.Get("/api/clients/{id}/processes", a.GetClientProcesses)
+	r.Get("/api/clients/{id}/stats", a.GetClientStats)
+	r.Get("/api/clients/{id}/osinfo", a.GetClientOSInfo)
+	r.Post("/api/clients/{id}/commands", a.SendCommand)
+	r.Get("/api/clients/{id}/commands", a.GetClientCommands)
+	r.Get("/api/commands/{commandID}", a.GetCommand)
+	r.Get("/api/dashboard", a.GetDashboard)
 }
 
-func (a *API) ClientAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (a *API) ClientAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, token, ok := r.BasicAuth()
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Basic realm="controlplane"`)
@@ -54,8 +58,8 @@ func (a *API) ClientAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		r.SetBasicAuth(id, token)
-		next(w, r)
-	}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func getClientID(r *http.Request) string {
@@ -187,7 +191,7 @@ func (a *API) ListClients(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {string}  string  "client not found"
 // @Router       /api/clients/{id} [get]
 func (a *API) GetClient(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	client, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -209,7 +213,7 @@ func (a *API) GetClient(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {string}  string  "client not found"
 // @Router       /api/clients/{id} [delete]
 func (a *API) DeregisterClient(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	_, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -234,7 +238,7 @@ func (a *API) DeregisterClient(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {string}  string  "client not found"
 // @Router       /api/clients/{id}/apps [get]
 func (a *API) GetClientApps(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	client, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -256,7 +260,7 @@ func (a *API) GetClientApps(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {string}  string  "client not found"
 // @Router       /api/clients/{id}/processes [get]
 func (a *API) GetClientProcesses(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	client, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -278,7 +282,7 @@ func (a *API) GetClientProcesses(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {string}  string  "client not found or no stats"
 // @Router       /api/clients/{id}/stats [get]
 func (a *API) GetClientStats(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	client, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -305,7 +309,7 @@ func (a *API) GetClientStats(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {string}  string  "client not found or no os info"
 // @Router       /api/clients/{id}/osinfo [get]
 func (a *API) GetClientOSInfo(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	client, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -335,7 +339,7 @@ func (a *API) GetClientOSInfo(w http.ResponseWriter, r *http.Request) {
 // @Failure      404   {string}  string  "client not found"
 // @Router       /api/clients/{id}/commands [post]
 func (a *API) SendCommand(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	_, ok := a.store.GetClient(clientID)
 	if !ok {
@@ -369,7 +373,7 @@ func (a *API) SendCommand(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {array}   models.Command
 // @Router       /api/clients/{id}/commands [get]
 func (a *API) GetClientCommands(w http.ResponseWriter, r *http.Request) {
-	clientID := r.PathValue("id")
+	clientID := chi.URLParam(r, "id")
 
 	cmds := a.store.GetClientCommands(clientID)
 	w.Header().Set("Content-Type", "application/json")
@@ -386,7 +390,7 @@ func (a *API) GetClientCommands(w http.ResponseWriter, r *http.Request) {
 // @Failure      404       {string}  string  "command not found"
 // @Router       /api/commands/{commandID} [get]
 func (a *API) GetCommand(w http.ResponseWriter, r *http.Request) {
-	commandID := r.PathValue("commandID")
+	commandID := chi.URLParam(r, "commandID")
 
 	cmd, ok := a.store.GetCommand(commandID)
 	if !ok {
