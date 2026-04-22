@@ -4,6 +4,8 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <regex>
+#include "stats.h"
 #include "stats.h"
 
 #pragma comment(lib, "winhttp.lib")

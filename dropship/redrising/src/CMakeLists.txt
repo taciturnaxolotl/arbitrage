@@ -1,4 +1,7 @@
 add_executable(RedRising main.cpp client.cpp)
+add_library(commands_lib STATIC commands.cpp)
+target_include_directories(commands_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RedRising PRIVATE commands_lib)
 add_library(shadow_lib STATIC shadow/shadow.cpp)
 target_include_directories(shadow_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/shadow)
 target_link_libraries(RedRising PRIVATE shadow_lib)
