@@ -133,6 +133,13 @@ func (s *Store) migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_client_id ON commands(client_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id TEXT PRIMARY KEY,
+			email TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL DEFAULT 'viewer',
+			created_at DATETIME NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -696,4 +703,128 @@ func generateToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return "cpt_" + hex.EncodeToString(b)
+}
+
+func (s *Store) GetUserByEmail(email string) (*models.User, bool) {
+	u := &models.User{}
+	err := s.db.QueryRow(`SELECT id, email, name, role, created_at FROM users WHERE email=?`, email).
+		Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt)
+	if err != nil {
+		return nil, false
+	}
+	return u, true
+}
+
+func (s *Store) GetUser(id string) (*models.User, bool) {
+	u := &models.User{}
+	err := s.db.QueryRow(`SELECT id, email, name, role, created_at FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt)
+	if err != nil {
+		return nil, false
+	}
+	return u, true
+}
+
+func (s *Store) ListUsers() []models.User {
+	rows, err := s.db.Query(`SELECT id, email, name, role, created_at FROM users ORDER BY created_at`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var users []models.User
+	for rows.Next() {
+		var u models.User
+		rows.Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.CreatedAt)
+		users = append(users, u)
+	}
+	if users == nil {
+		users = []models.User{}
+	}
+	return users
+}
+
+func (s *Store) CreateUser(email, name, role string) (*models.User, error) {
+	id := generateUUID()
+	now := time.Now()
+	_, err := s.db.Exec(`INSERT INTO users (id, email, name, role, created_at) VALUES (?, ?, ?, ?, ?)`, id, email, name, role, now)
+	if err != nil {
+		return nil, err
+	}
+	return &models.User{ID: id, Email: email, Name: name, Role: role, CreatedAt: now}, nil
+}
+
+func (s *Store) UpdateUserRole(id, role string) bool {
+	res, err := s.db.Exec(`UPDATE users SET role=? WHERE id=?`, role, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+func (s *Store) DeleteUser(id string) bool {
+	res, err := s.db.Exec(`DELETE FROM users WHERE id=?`, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n > 0
+}
+
+func (s *Store) EnsureAdminExists(adminEmail string) {
+	if adminEmail == "" {
+		return
+	}
+	u, exists := s.GetUserByEmail(adminEmail)
+	if exists {
+		if u.Role != "admin" {
+			s.UpdateUserRole(u.ID, "admin")
+			log.Printf("Updated existing user %s to admin role", adminEmail)
+		}
+		return
+	}
+	_, err := s.CreateUser(adminEmail, "", "admin")
+	if err != nil {
+		log.Printf("Failed to create admin user: %v", err)
+	} else {
+		log.Printf("Created admin user: %s", adminEmail)
+	}
+}
+
+func (s *Store) GetUserByEmailForAuth(email string) (id string, role string, exists bool) {
+	u, ok := s.GetUserByEmail(email)
+	if !ok {
+		return "", "", false
+	}
+	return u.ID, u.Role, true
+}
+
+func (s *Store) AutoCreateUser(email, name string) string {
+	u, err := s.CreateUser(email, name, "viewer")
+	if err != nil {
+		log.Printf("Failed to auto-create user %s: %v", email, err)
+		return ""
+	}
+	log.Printf("Auto-created user: %s (role=viewer)", email)
+	return u.Role
+}
+
+func (s *Store) AutoCreateUserWithRole(email, name, role string) {
+	_, err := s.CreateUser(email, name, role)
+	if err != nil {
+		log.Printf("Failed to auto-create user %s with role %s: %v", email, role, err)
+		return
+	}
+	log.Printf("Auto-created user: %s (role=%s)", email, role)
+}
+
+func (s *Store) SyncUserRole(email, role string) {
+	u, ok := s.GetUserByEmail(email)
+	if !ok {
+		return
+	}
+	if u.Role != role {
+		s.UpdateUserRole(u.ID, role)
+		log.Printf("Synced role for %s: %s -> %s", email, u.Role, role)
+	}
 }

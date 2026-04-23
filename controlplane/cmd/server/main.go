@@ -45,12 +45,13 @@ func main() {
 		log.Fatal("SESSION_SECRET environment variable is required")
 	}
 
-	auth := middleware.NewAuth(indikoCfg, sessionSecret)
-
 	dbPath := os.Getenv("DB_PATH")
 	s := store.New(dbPath)
 	h := ws.NewHub(s)
 	api := handlers.NewAPI(s, h)
+
+	auth := middleware.NewAuth(indikoCfg, sessionSecret, s)
+	api.SetSessionStore(auth.SessionStore())
 
 	r := chi.NewRouter()
 
@@ -58,7 +59,7 @@ func main() {
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
-		AllowCredentials: false,
+		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 	r.Use(chimw.RequestID)
@@ -69,6 +70,7 @@ func main() {
 	r.Get("/auth/login", auth.LoginHandler)
 	r.Get("/auth/callback", auth.CallbackHandler)
 	r.Get("/auth/logout", auth.LogoutHandler)
+	r.Get("/auth/denied", auth.DeniedHandler)
 
 	api.RegisterRoutes(r)
 

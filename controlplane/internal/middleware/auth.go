@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -155,15 +156,23 @@ type UserInfo struct {
 	Role   string `json:"role,omitempty"`
 }
 
+type UserStore interface {
+	GetUserByEmailForAuth(email string) (id string, role string, exists bool)
+	AutoCreateUser(email, name string) string
+	AutoCreateUserWithRole(email, name, role string)
+	SyncUserRole(email, role string)
+}
+
 type Auth struct {
 	config      *IndikoConfig
 	oauth2      *oauth2.Config
 	pkce        *PKCEManager
 	store       sessions.Store
 	sessionName string
+	userStore   UserStore
 }
 
-func NewAuth(cfg *IndikoConfig, sessionSecret string) *Auth {
+func NewAuth(cfg *IndikoConfig, sessionSecret string, userStore UserStore) *Auth {
 	if sessionSecret == "" {
 		sessionSecret = "controlplane-default-secret-change-me"
 	}
@@ -182,6 +191,7 @@ func NewAuth(cfg *IndikoConfig, sessionSecret string) *Auth {
 		pkce:        NewPKCEManager(),
 		store:       cookieStore,
 		sessionName: "controlplane-session",
+		userStore:   userStore,
 	}
 }
 
@@ -239,10 +249,47 @@ func (a *Auth) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userInfo, err := a.fetchUserInfo(token.AccessToken)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to get user info: %v", err), http.StatusInternalServerError)
-		return
+	// Extract role from token response (Indiko provides role in token)
+	role, _ := token.Extra("role").(string)
+
+	// Extract me (unique user identifier) from token response
+	me, _ := token.Extra("me").(string)
+
+	// Extract profile from token response if available
+	var userInfo *UserInfo
+	if profileData := token.Extra("profile"); profileData != nil {
+		profileBytes, _ := json.Marshal(profileData)
+		json.Unmarshal(profileBytes, &userInfo)
+	}
+	if userInfo == nil {
+		userInfo, err = a.fetchUserInfo(token.AccessToken)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to get user info: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Set me from token if not in profile
+	if userInfo.Me == "" {
+		userInfo.Me = me
+	}
+
+	// Auto-create/update user in DB, sync role from Indiko
+	if a.userStore != nil && userInfo.Email != "" {
+		if _, dbRole, exists := a.userStore.GetUserByEmailForAuth(userInfo.Email); exists {
+			// Sync role from Indiko if it differs
+			if role != "" && role != dbRole {
+				a.userStore.SyncUserRole(userInfo.Email, role)
+			} else {
+				role = dbRole
+			}
+		} else {
+			if role == "" {
+				role = a.userStore.AutoCreateUser(userInfo.Email, userInfo.Name)
+			} else {
+				a.userStore.AutoCreateUserWithRole(userInfo.Email, userInfo.Name, role)
+			}
+		}
 	}
 
 	session.Values["access_token"] = token.AccessToken
@@ -250,9 +297,16 @@ func (a *Auth) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	session.Values["authenticated"] = true
 	session.Values["user_name"] = userInfo.Name
 	session.Values["user_email"] = userInfo.Email
+	session.Values["user_me"] = userInfo.Me
 	session.Values["user_photo"] = userInfo.Photo
-	session.Values["user_role"] = userInfo.Role
+	session.Values["user_role"] = role
 	session.Save(r, w)
+
+	if role != "admin" {
+		log.Printf("Access denied for %s (role=%q)", userInfo.Email, role)
+		http.Redirect(w, r, "/auth/denied", http.StatusFound)
+		return
+	}
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -270,6 +324,19 @@ func (a *Auth) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	session.Save(r, w)
 
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func (a *Auth) SessionStore() sessions.Store {
+	return a.store
+}
+
+func (a *Auth) SessionName() string {
+	return a.sessionName
+}
+
+func (a *Auth) DeniedHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(`<!DOCTYPE html><html><head><title>Access Denied</title><style>body{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}div{text-align:center;max-width:400px}h1{color:#f85149}a{color:#58a6ff}</style></head><body><div><h1>Access Denied</h1><p>You do not have admin access to this control plane.</p><p style="color:#8b949e;font-size:14px">Your Indiko role for this application must be set to "admin". Contact your administrator.</p><p><a href="/auth/logout">Sign out</a></p></div></body></html>`))
 }
 
 func (a *Auth) fetchUserInfo(accessToken string) (*UserInfo, error) {
@@ -345,6 +412,10 @@ func (a *Auth) RequireAuth(next http.Handler) http.Handler {
 				http.Redirect(w, r, "/auth/login", http.StatusTemporaryRedirect)
 				return
 			}
+			if !a.IsAdmin(r) {
+				http.Error(w, "forbidden: admin role required", http.StatusForbidden)
+				return
+			}
 		} else {
 			if !a.validateBearerToken(r) && !a.isAuthenticated(r) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -399,6 +470,36 @@ func (a *Auth) GetSessionInfo(r *http.Request) map[string]interface{} {
 		}
 	}
 	return info
+}
+
+func (a *Auth) RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, _ := a.store.Get(r, a.sessionName)
+		role, _ := session.Values["user_role"].(string)
+		if role != "admin" {
+			http.Error(w, "forbidden: admin role required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *Auth) IsAdmin(r *http.Request) bool {
+	session, _ := a.store.Get(r, a.sessionName)
+	role, _ := session.Values["user_role"].(string)
+	return role == "admin"
+}
+
+func (a *Auth) GetSessionRole(r *http.Request) string {
+	session, _ := a.store.Get(r, a.sessionName)
+	role, _ := session.Values["user_role"].(string)
+	return role
+}
+
+func (a *Auth) GetSessionEmail(r *http.Request) string {
+	session, _ := a.store.Get(r, a.sessionName)
+	email, _ := session.Values["user_email"].(string)
+	return email
 }
 
 func randomString(length int) (string, error) {

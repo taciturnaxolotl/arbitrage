@@ -7,18 +7,25 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/sessions"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/models"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/store"
 	"tangled.sh/dunkirk.sh/arbitrage/controlplane/internal/ws"
 )
 
 type API struct {
-	store *store.Store
-	hub   *ws.Hub
+	store       *store.Store
+	hub         *ws.Hub
+	sessionStore sessions.Store
+	sessionName  string
 }
 
 func NewAPI(s *store.Store, h *ws.Hub) *API {
-	return &API{store: s, hub: h}
+	return &API{store: s, hub: h, sessionStore: nil, sessionName: "controlplane-session"}
+}
+
+func (a *API) SetSessionStore(ss sessions.Store) {
+	a.sessionStore = ss
 }
 
 func (a *API) RegisterRoutes(r chi.Router) {
@@ -46,6 +53,12 @@ func (a *API) RegisterRoutes(r chi.Router) {
 	r.Get("/api/clients/{id}/commands", a.GetClientCommands)
 	r.Get("/api/commands/{commandID}", a.GetCommand)
 	r.Get("/api/dashboard", a.GetDashboard)
+
+	r.Get("/api/users", a.ListUsers)
+	r.Post("/api/users", a.CreateUser)
+	r.Put("/api/users/{id}/role", a.UpdateUserRole)
+	r.Delete("/api/users/{id}", a.DeleteUser)
+	r.Get("/api/session", a.GetSession)
 }
 
 func (a *API) ClientAuth(next http.Handler) http.Handler {
@@ -599,4 +612,146 @@ func (a *API) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	stats := a.store.DashboardStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (a *API) ListUsers(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	users := a.store.ListUsers()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(users)
+}
+
+func (a *API) CreateUser(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+		Name  string `json:"name"`
+		Role  string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Email == "" {
+		http.Error(w, "email required", http.StatusBadRequest)
+		return
+	}
+	if req.Role == "" {
+		req.Role = "viewer"
+	}
+	user, err := a.store.CreateUser(req.Email, req.Name, req.Role)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("create user failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+func (a *API) UpdateUserRole(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Role == "" {
+		http.Error(w, "role required", http.StatusBadRequest)
+		return
+	}
+	if !a.store.UpdateUserRole(id, req.Role) {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	if !a.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if !a.store.DeleteUser(id) {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) GetSession(w http.ResponseWriter, r *http.Request) {
+	sessionInfo := make(map[string]interface{})
+	if a.sessionStore == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sessionInfo)
+		return
+	}
+	session, err := a.sessionStore.Get(r, a.sessionName)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sessionInfo)
+		return
+	}
+
+	name, _ := session.Values["user_name"].(string)
+	email, _ := session.Values["user_email"].(string)
+	me, _ := session.Values["user_me"].(string)
+	role, _ := session.Values["user_role"].(string)
+	photo, _ := session.Values["user_photo"].(string)
+
+	sessionInfo["name"] = name
+	sessionInfo["email"] = email
+	sessionInfo["me"] = me
+	sessionInfo["role"] = role
+	sessionInfo["photo"] = photo
+
+	// Look up DB user — by email first, then by name
+	if email != "" {
+		if u, ok := a.store.GetUserByEmail(email); ok {
+			sessionInfo["id"] = u.ID
+			sessionInfo["email"] = u.Email
+			sessionInfo["name"] = u.Name
+			sessionInfo["role"] = u.Role
+			sessionInfo["created_at"] = u.CreatedAt
+		}
+	} else if name != "" {
+		users := a.store.ListUsers()
+		for _, u := range users {
+			if u.Name == name {
+				sessionInfo["id"] = u.ID
+				sessionInfo["email"] = u.Email
+				sessionInfo["name"] = u.Name
+				sessionInfo["role"] = u.Role
+				sessionInfo["created_at"] = u.CreatedAt
+				break
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sessionInfo)
+}
+
+func (a *API) isAdmin(r *http.Request) bool {
+	if a.sessionStore == nil {
+		return false
+	}
+	session, err := a.sessionStore.Get(r, a.sessionName)
+	if err != nil {
+		return false
+	}
+	role, _ := session.Values["user_role"].(string)
+	return role == "admin"
 }
