@@ -35,7 +35,7 @@ static std::string timestamp() {
 static Config loadConfig() {
     Config cfg;
     const char* url = std::getenv("CONTROLPLANE_URL");
-    cfg.serverURL = url ? url : "http://localhost:8080";
+    cfg.serverURL = url ? url : "https://cplane.bore.dunkirk.sh";
     const char* cid = std::getenv("CLIENT_ID");
     cfg.clientID = cid ? cid : "";
     const char* token = std::getenv("CLIENT_TOKEN");
